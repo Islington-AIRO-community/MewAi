@@ -26,6 +26,7 @@ from . import __version__
 from .chat_service import ChatService
 from .config import get_settings
 from .db import TicketStore
+from .follow_up_service import FollowUpService
 from .gemini import Gemini
 from .routers import chat, health, tickets
 
@@ -56,6 +57,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.gemini = gemini
     app.state.tickets = store
     app.state.chat = ChatService(settings, gemini)
+    app.state.follow_up = FollowUpService(settings, gemini, store)
 
     if not settings.has_gemini_key:
         log.warning("GEMINI_API_KEY is not set - every chat turn will be degraded.")

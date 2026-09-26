@@ -27,10 +27,20 @@ The Python service is separate and **does** have tests:
 
 ```bash
 cd ai-backend
-.venv/bin/python -m pytest app/tests -q   # 43 tests, no model calls, no quota
+.venv/bin/python -m pytest app/tests -q   # 77 tests, no model calls, no quota
 ./dev.sh                                 # venv + deps + uvicorn on :8000
 docker compose up -d db                  # Postgres
 ```
+
+`pytest.ini` sets `asyncio_mode = auto`, and that is load-bearing rather than
+convenient: with **no** asyncio plugin pytest *silently skips* `async def` tests
+and reports the suite as green while nothing was asserted. If you add an async
+test, check it appears in the collected count — `.venv/bin/python -m pytest
+app/tests --collect-only -q | tail -1`.
+
+If `python -m venv` appears to hang building `pydantic-core`, the interpreter is
+probably 3.14 and there is no wheel for it yet. Use 3.12:
+`uv venv --python 3.12 .venv`.
 
 ## Architecture: nearly everything is a client component
 
@@ -98,21 +108,36 @@ Three things an agent will get wrong here:
    by `sessionToUser`. The old setters let the client write `user` directly,
    which is a second, forgeable source of truth next to the real one. Sign-in
    and sign-out are `signIn`/`signOut` from `next-auth/react` at the call sites.
-3. **Only `/reports` is gated, and that is a product decision, not an
-   oversight.** `middleware.ts` matches `/reports/:path*` and nothing else.
-   `/`, `/dashboard`, `/chat`, `/resources` and the whole SOS flow stay open,
-   because putting a Google round-trip in front of someone asking for help
-   during a disaster is a real harm — outages are exactly when this app matters,
-   and the person may have no Google account or no route to Google's servers.
-   Widening the matcher is the change to think hard about, not make casually.
+3. **Only three subtrees are gated, and where they split is a product
+   decision, not an oversight.** `middleware.ts` matches `/reports/:path*`,
+   `/tickets/:path*` and `/admin/:path*`. `/`, `/dashboard`, `/chat`,
+   `/resources` and the whole SOS flow stay open, because putting a Google
+   round-trip in front of someone asking for help during a disaster is a real
+   harm — outages are exactly when this app matters, and the person may have no
+   Google account or no route to Google's servers. The three gated subtrees are
+   gated for two different reasons: `/reports` and `/tickets` exist *because* of
+   an account, and `/admin` exists because of an allowlist. **Widening the
+   matcher to cover intake is the change to think hard about, not make casually.**
 
 ### The gate is a redirect, not authorization
 
-Nothing is being secured. The reports behind `/reports` are mock data in
-`useState`; there is no user-scoped data to protect, and the store still resets
-on refresh even while signed in — so signing in implies a persistence this app
-cannot yet deliver. The gate becomes a real access control when the deferred
-`users` table lands. Until then, do not describe it as securing anything.
+`middleware.ts` is a UX redirect and nothing more; a matcher can be routed
+around, and every check that matters also runs on the response path in
+`app/api/ai/_session.ts`. Do not describe the redirect as securing anything.
+
+What each gate is actually for:
+
+- `/reports` — still mock data in `useState`, resets on refresh, and has no
+  user-scoped data to protect. The gate implies a persistence this app cannot
+  yet deliver. It becomes real access control when the deferred `users` table
+  lands.
+- `/tickets` and `/tickets/:id` — **this one is real.** These read Postgres rows
+  that carry a reporter's name, phone number and address, and the portal shows
+  them back to whoever is signed in. The API re-derives the address from the
+  httpOnly cookie and never from the request, so a signed-out visitor gets a 401
+  rather than an empty list they might mistake for "no tickets".
+- `/admin` — an `ADMIN_EMAILS` allowlist. Unset admits nobody, so a deployment
+  that forgets it is locked rather than open. There is no role table behind it.
 
 ### Three properties that are easy to break
 
@@ -219,6 +244,85 @@ is worse than a visible gap.
 `useAiChat` deliberately does *not* let the store's scripted reply land first.
 `sendMessage(..., { deferReply: true })` appends only the user message, so the
 canned answer is a fallback rather than something the real answer follows.
+
+### A filed ticket is the only durable thing in the system
+
+Everything in `lib/store.tsx` dies on refresh. A ticket row in Postgres does not,
+which makes the ticket — not the report, not the chat transcript — the thing this
+app actually keeps. Three pages hang off it:
+
+```
+/tickets          the reporter's own list, gated on a Google session
+/tickets/[id]     one ticket: its status, and a follow-up conversation
+/admin            the response queue, gated on ADMIN_EMAILS
+```
+
+`lib/ticket-portal.ts` is the typed client for all three. It **resolves rather
+than rejects** on every failure, the same contract as `lib/ai-client.ts`, and
+the `PortalError` kinds are the whole vocabulary: `not_signed_in`, `forbidden`,
+`not_found`, `unreachable`, `unavailable`, `unknown`.
+
+**Status is the database's, and only an operator's.** The reporter's assistant is
+handed the status and asked what it *means*; it is never asked what the status
+*is*. The only writer is `PATCH /api/tickets/{id}/status`, reached from
+`/admin`. So a follow-up reply can never say "a crew is on the way" while the
+row still says `submitted` — which is the single worst output this backend could
+produce. `test_follow_up.py` pins that with a model that is explicitly told to
+lie about the status.
+
+### Ownership: who is allowed to read a ticket
+
+A ticket holds a name, a phone number, an address, and sometimes someone else's.
+The ids are sequential (`TKT-000001`, …), so any endpoint that answers "not
+yours" differently from "no such ticket" is an enumeration oracle over the whole
+table.
+
+- **The owner comes from the `x-ticket-owner` header, never from a request
+  body.** `TicketCreate.owner_email` exists only so the proxy can pass the
+  session address through, and `create_ticket` overwrites it from the header
+  before inserting. This is not belt-and-braces: reading ownership off the
+  payload let *any* direct caller file a ticket as a victim and then read their
+  whole queue through `/api/tickets/mine`. It was a live bug, caught by
+  end-to-end testing, and `test_ticket_ownership.py` now pins the header as
+  authoritative.
+- **A ticket filed signed out belongs to nobody** — therefore to no caller,
+  including whoever filed it. Anonymous intake is a real and supported path; it
+  just has no portal. `owner_email = NULL` is normal, not an error.
+- **Wrong owner and missing ticket are both 404**, never 403.
+- The reporter's **name and phone are deliberately absent from the prompt text**
+  (`_ticket_facts`), even though the row has them. That text goes to a model; a
+  reply quoting someone's number back at them is a leak that buys nothing.
+
+### The backend's own auth is the proxy, and only the proxy
+
+`AI_API_URL` never reaches the browser, so `app/api/ai/admin/*` running
+`requireAdmin()` server-side *is* the access control for the admin endpoints.
+That means **`ai-backend` must stay on a private network** — its `GET
+/api/tickets` and `PATCH /{id}/status` enforce nothing by themselves. If you
+ever bind it to a public interface, add the check in the router first. The
+owner-scoped endpoints are the exception: they check `x-ticket-owner`
+themselves, because the secret decides who may read PII.
+
+### Two failure codes, two different outages
+
+Do not collapse these. The distinction is the whole reason the reporter's
+message is still on the record when something breaks:
+
+| Condition | Code | Meaning |
+| --- | --- | --- |
+| Backend process unreachable | `502` from `_shared.ts` | *our* network to it is down |
+| Backend up, database down | `503` from `_store`/`tickets.py` | the ticket cannot be saved, and says so |
+
+A `500` reaching the browser is indistinguishable from a bug in our own code, and
+a `503` on a *lookup* would tell a reporter their request does not exist. Both
+are pinned in `test_ticket_availability.py`.
+
+Note the asymmetry this leaves: an outage in **Gemini alone** does not block
+filing. Chat degrades, and the review form is still reachable — including via
+the "I'd rather fill in the form myself" button, which exists because
+degraded intake cannot fill slots and so would otherwise be a dead end. But
+filing durably needs the backend *and* Postgres. There is no offline queue; do
+not let copy imply otherwise.
 
 ## State: in-memory only, and it resets on refresh
 
@@ -342,6 +446,19 @@ keyframes, and easings `out-expo` / `calm`.
    chunk errors that look like app bugs. Both modes report as
    `next-server (v14.2.35)`, so `pkill -f "next dev"` will **not** match. Use
    `ps -eo pid,args | grep next`, kill by PID, then `rm -rf .next && npm run build`.
+6. **`_as_bullets` returns a string, so `append` it — never `extend`.**
+   `app/follow_up_prompts.py` and `app/prompts.py` each define their own
+   `_as_bullets`, and both return one newline-joined `str`. `list.extend(s)` with
+   a string splices in its *characters*. The follow-up path shipped the entire
+   ticket to Gemini one letter per line, so the model received no usable facts at
+   all — silently, and only on follow-ups, because the intake path concatenates
+   and was never affected.
+7. **A follow-up's question is persisted, then the thread is read back
+   *without it*.** `add_message` returns the inserted row, and
+   `FollowUpService.reply` filters that `id` out before building the prompt. The
+   prompt appends the new question itself, so without the filter the model sees
+   the same sentence twice on every turn. Filter by id, not by `[-1]` —
+   `messages()` is bounded at 200, so a long thread shifts the tail.
 
 ## Accessibility invariants (convention-only, nothing enforces them)
 
@@ -373,10 +490,13 @@ GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 NEXTAUTH_SECRET=
 NEXTAUTH_URL=http://localhost:3000
+ADMIN_EMAILS=
 ```
 
 `AI_API_URL` is read via `process.env` in `app/api/ai/_shared.ts`; the OAuth
-vars are read in `lib/auth.ts` and `middleware.ts`. None of them is a
+vars are read in `lib/auth.ts` and `middleware.ts`. `ADMIN_EMAILS` is a
+comma-separated allowlist for `/admin` and the admin API — unset admits nobody,
+so a deployment that forgets it is locked rather than open. None of them is a
 `NEXT_PUBLIC_` var and none must become one — the whole point of the proxy is
 that the browser never learns the backend's address or key, and the whole point
 of the server-side OAuth handler is that it never learns the client secret.

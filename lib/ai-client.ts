@@ -54,11 +54,25 @@ export interface ChatTurnResult {
   degraded: boolean;
 }
 
+/**
+ * Lifecycle, mirrored from `TicketStatus` in `ai-backend/app/schemas.py`.
+ *
+ * The reporter-facing wording is not these values — see
+ * `components/assistant/ticket-status.tsx`, which collapses five states into
+ * the three that are meaningful to someone waiting for help.
+ */
+export type TicketStatus =
+  | 'submitted'
+  | 'under_review'
+  | 'dispatched'
+  | 'resolved'
+  | 'closed';
+
 export interface StoredTicket {
   id: string;
   created_at: string;
   updated_at: string;
-  status: 'submitted' | 'under_review' | 'dispatched' | 'resolved' | 'closed';
+  status: TicketStatus;
   reporter_name: string;
   reporter_phone: string;
   victim_name: string;
@@ -72,6 +86,17 @@ export interface StoredTicket {
   notes: string;
   source: string;
   session_id: string | null;
+  /**
+   * The Google account this ticket was filed under, or `null` when it was
+   * filed signed out.
+   *
+   * Set by the proxy from the httpOnly session cookie and never from the
+   * request body — see `app/api/ai/tickets/route.ts`. Intake is deliberately
+   * open to signed-out people, so a `null` here is a normal outcome and not an
+   * error: that ticket is real and will be worked, it just cannot be tracked
+   * from the portal later.
+   */
+  owner_email: string | null;
 }
 
 /** An empty draft, so the review form always binds to a complete shape. */

@@ -26,6 +26,7 @@ from .config import Settings
 from .schemas import (
     Ticket,
     TicketCreate,
+    TicketMessage,
     TicketStatus,
     Urgency,
 )
@@ -52,7 +53,25 @@ CREATE TABLE IF NOT EXISTS relief_tickets (
     on_behalf_of_other  boolean            NOT NULL DEFAULT false,
     notes               text               NOT NULL DEFAULT '',
     source              text               NOT NULL DEFAULT 'ai-chat',
-    session_id          text
+    session_id          text,
+    owner_email         text
+);
+
+-- Added after the first release, so the ALTER is the path for databases that
+-- already have the table. `IF NOT EXISTS` keeps this re-runnable alongside the
+-- CREATE above, which is the only reason the startup DDL is tolerable at all.
+ALTER TABLE relief_tickets ADD COLUMN IF NOT EXISTS owner_email text;
+
+-- The follow-up conversation. Separate table rather than a column on the
+-- ticket: it is append-only, unbounded, and read by a different path, and
+-- keeping it out of `relief_tickets` means the reporter-facing read never has
+-- to select it.
+CREATE TABLE IF NOT EXISTS ticket_messages (
+    id                  bigserial          PRIMARY KEY,
+    ticket_id           text               NOT NULL REFERENCES relief_tickets (id) ON DELETE CASCADE,
+    role                text               NOT NULL,
+    text                text               NOT NULL,
+    created_at          timestamptz        NOT NULL DEFAULT now()
 );
 
 CREATE INDEX IF NOT EXISTS relief_tickets_created_at_idx
@@ -62,12 +81,22 @@ CREATE INDEX IF NOT EXISTS relief_tickets_status_idx
 CREATE INDEX IF NOT EXISTS relief_tickets_session_idx
     ON relief_tickets (session_id)
     WHERE session_id IS NOT NULL;
+
+-- Partial: only owned tickets are ever looked up this way, and "my tickets"
+-- is the hot path for a signed-in reporter.
+CREATE INDEX IF NOT EXISTS relief_tickets_owner_idx
+    ON relief_tickets (owner_email, created_at DESC)
+    WHERE owner_email IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS ticket_messages_ticket_idx
+    ON ticket_messages (ticket_id, id);
 """
 
 _COLUMNS = """
     id, created_at, updated_at, status, reporter_name, reporter_phone,
     victim_name, victim_phone, summary, location, people_affected,
-    support_needed, urgency, on_behalf_of_other, notes, source, session_id
+    support_needed, urgency, on_behalf_of_other, notes, source, session_id,
+    owner_email
 """
 
 
@@ -132,11 +161,11 @@ class TicketStore:
                         id, reporter_name, reporter_phone, victim_name,
                         victim_phone, summary, location, people_affected,
                         support_needed, urgency, on_behalf_of_other, notes,
-                        source, session_id
+                        source, session_id, owner_email
                     )
                     VALUES (
                         'TKT-' || lpad(nextval('relief_ticket_seq')::text, 6, '0'),
-                        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+                        $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
                     )
                     RETURNING """
                     + _COLUMNS,
@@ -153,11 +182,19 @@ class TicketStore:
                     payload.notes.strip(),
                     payload.source,
                     payload.session_id,
+                    _clean_email(payload.owner_email),
                 )
         return _to_ticket(row)
 
     async def update_status(self, ticket_id: str, status: TicketStatus) -> Ticket | None:
-        """Admin-side transition. Not wired to any UI yet — this is the hook."""
+        """
+        Admin-side transition, the only thing in the system that moves a status.
+
+        The reporter-facing assistant cannot call this and does not try: the
+        follow-up service echoes the row rather than writing to it, so a model
+        reply can never promote a ticket. The only writer is a person on
+        `/admin`, through `app/api/ai/admin/tickets/[id]/route.ts`.
+        """
         pool = self._require_pool()
         row = await pool.fetchrow(
             f"UPDATE relief_tickets SET status = $2, updated_at = now() "
@@ -200,6 +237,83 @@ class TicketStore:
             offset,
         )
         return int(total), [_to_ticket(row) for row in rows]
+
+    async def list_for_owner(
+        self, owner_email: str, *, limit: int = 50, offset: int = 0
+    ) -> tuple[int, list[Ticket]]:
+        """
+        Tickets filed under one account, newest first.
+
+        Scoped by exact match on the normalised address. This is the query behind
+        "my tickets", and it is the only reason `owner_email` is indexed at all.
+        """
+        pool = self._require_pool()
+        email = _clean_email(owner_email)
+        total = await pool.fetchval(
+            "SELECT count(*) FROM relief_tickets WHERE owner_email = $1", email
+        )
+        rows = await pool.fetch(
+            f"SELECT {_COLUMNS} FROM relief_tickets WHERE owner_email = $1 "
+            f"ORDER BY created_at DESC, id DESC LIMIT $2 OFFSET $3",
+            email,
+            limit,
+            offset,
+        )
+        return int(total), [_to_ticket(row) for row in rows]
+
+    # ---- follow-up messages ------------------------------------------- #
+
+    async def add_message(
+        self, ticket_id: str, role: str, text: str
+    ) -> TicketMessage:
+        """
+        Append one turn of follow-up conversation.
+
+        The user's turn is written *before* the model is called. If Gemini then
+        fails, the reporter's question is still on the record and still visible
+        to an operator — losing their words because our model call failed is the
+        one outcome worth spending an extra insert on.
+        """
+        pool = self._require_pool()
+        row = await pool.fetchrow(
+            """
+            INSERT INTO ticket_messages (ticket_id, role, text)
+            VALUES ($1, $2, $3)
+            RETURNING id, ticket_id, role, text, created_at
+            """,
+            ticket_id,
+            role,
+            text.strip(),
+        )
+        return _to_message(row)
+
+    async def messages(
+        self, ticket_id: str, *, limit: int = 200
+    ) -> list[TicketMessage]:
+        """
+        The follow-up conversation, oldest first.
+
+        Bounded and deliberately so. A reporter and an operator do not generate
+        thousands of turns, and this holds the kind of content that should not
+        grow without bound in a disaster-response system.
+        """
+        pool = self._require_pool()
+        rows = await pool.fetch(
+            """
+            SELECT id, ticket_id, role, text, created_at
+            FROM (
+                SELECT id, ticket_id, role, text, created_at
+                FROM ticket_messages
+                WHERE ticket_id = $1
+                ORDER BY id DESC
+                LIMIT $2
+            ) recent
+            ORDER BY id ASC
+            """,
+            ticket_id,
+            limit,
+        )
+        return [_to_message(row) for row in rows]
 
     async def stats(self) -> dict[str, int]:
         """Counts by status and by support type, for the admin view later."""
@@ -244,7 +358,34 @@ def _to_ticket(row: asyncpg.Record) -> Ticket:
         notes=row["notes"],
         source=row["source"],
         session_id=row["session_id"],
+        owner_email=row["owner_email"],
     )
+
+
+def _to_message(row: asyncpg.Record) -> TicketMessage:
+    return TicketMessage(
+        id=int(row["id"]),
+        ticket_id=row["ticket_id"],
+        role=row["role"],
+        text=row["text"],
+        created_at=_as_utc(row["created_at"]),
+    )
+
+
+def _clean_email(value: str | None) -> str | None:
+    """
+    Normalise an owner address, or drop it.
+
+    Addresses are compared to decide who may read a ticket, so they are stored
+    in exactly one shape. `None` and the empty string mean the same thing here —
+    a ticket filed without an account — and both collapse to `NULL` rather than
+    to `''`, because `''` would match `''` in a lookup and hand one anonymous
+    ticket to another anonymous reporter.
+    """
+    if not value:
+        return None
+    cleaned = value.strip().lower()
+    return cleaned or None
 
 
 def _as_utc(value: datetime) -> datetime:

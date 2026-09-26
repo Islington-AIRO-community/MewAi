@@ -66,6 +66,14 @@ export interface AiChatApi extends AiChatState {
   toggleSupport: (type: SupportType) => void;
   /** Turn the "reporting for someone else" switch. */
   setOnBehalf: (value: boolean) => void;
+  /**
+   * Open the review form without waiting for the assistant.
+   *
+   * The escape hatch. Filing a ticket must never depend on the model being
+   * reachable — a degraded turn can never report the intake complete, so
+   * without this the composer is the only thing an outage leaves behind.
+   */
+  openReview: () => void;
   /** Start a fresh ticket, keeping the transcript. */
   reset: () => void;
   /** Write the ticket. Resolves with the stored ticket, or null if rejected. */
@@ -182,14 +190,24 @@ export function useAiChat(): AiChatApi {
         setState((prev) => ({
           ...prev,
           busy: false,
-          status: turn.is_complete ? 'review' : 'thinking',
+          // Opened off the client-computed `missing`, not the server's
+          // `is_complete`. The two are derived from the same rule
+          // (`missingSlots` mirrors `missing_slots`), but the server can only
+          // say yes after a successful Gemini turn — and the degraded turn
+          // never carries a name, number or location, so during an outage
+          // `is_complete` was permanently false. That made the one durable way
+          // to file a ticket conditional on the AI being up, which is exactly
+          // backwards for a disaster. `submit()` re-checks locally and the
+          // backend checks again, so an over-eager open still cannot write an
+          // incomplete ticket.
+          status: missing.length === 0 ? 'review' : 'thinking',
           draft,
           missing,
           asking: turn.next_questions ?? [],
           offline: turn.degraded,
           safetyNote: turn.safety_note ?? '',
           // A complete draft invalidates a previous rejection.
-          rejected: turn.is_complete ? [] : prev.rejected,
+          rejected: missing.length === 0 ? [] : prev.rejected,
         }));
       } catch {
         // Backend down, key wrong, or a network blip. Fall back to the scripted
@@ -330,12 +348,30 @@ export function useAiChat(): AiChatApi {
     setState((prev) => ({ ...prev, status: 'idle', ticket: null }));
   }, []);
 
+  /**
+   * Open the review form on request, without waiting for the assistant to
+   * decide the intake is finished.
+   *
+   * This is the escape hatch that keeps an outage from being a dead end. The
+   * reporter can always get to a form they can type into, which is a very
+   * different outcome from a composer that keeps asking the same question at
+   * someone who is typing one-handed in a basement.
+   *
+   * Arriving with an incomplete draft is fine. `submit()` pre-flights with the
+   * same `missingSlots` predicate and lights up whatever is still blank, so the
+   * form opens, the fields are editable, and nothing writes until it is whole.
+   */
+  const openReview = React.useCallback(() => {
+    setState((prev) => ({ ...prev, status: 'review', error: '' }));
+  }, []);
+
   return {
     ...state,
     send,
     edit,
     toggleSupport,
     setOnBehalf,
+    openReview,
     reset,
     submit,
     dismissTicket,
@@ -409,6 +445,12 @@ function ticketErrorMessage(error: unknown): string {
   if (!(error instanceof Error)) return 'The ticket could not be created.';
   if (/backend_unreachable/.test(error.message)) {
     return 'The relief service could not be reached. Your details are still here — try again in a moment.';
+  }
+  // The backend is up and answering, but its database is not. Distinct from
+  // both the validation and the unreachable cases: retrying in a moment is
+  // right, and the reporter should know nothing is wrong with what they typed.
+  if (/\b503\b/.test(error.message)) {
+    return 'The ticket service is temporarily down and no ticket was saved. Everything you entered is still here — try again in a moment.';
   }
   if (/\b(422|400)\b/.test(error.message)) {
     return 'The service rejected some details. Check the highlighted fields.';

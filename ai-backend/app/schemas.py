@@ -167,6 +167,7 @@ class TicketCreate(BaseModel):
     notes: str = Field(default="", max_length=2000)
     source: str = Field(default="ai-chat", max_length=32)
     session_id: str | None = Field(default=None, max_length=64)
+    owner_email: str | None = Field(default=None, max_length=254)
 
     @field_validator("people_affected", mode="before")
     @classmethod
@@ -214,6 +215,7 @@ class Ticket(BaseModel):
     notes: str
     source: str
     session_id: str | None
+    owner_email: str | None
 
 
 class TicketListResponse(BaseModel):
@@ -221,3 +223,57 @@ class TicketListResponse(BaseModel):
 
     total: int
     tickets: list[Ticket]
+
+
+# ---------------------------------------------------------------------- #
+# Follow-up conversation
+# ---------------------------------------------------------------------- #
+
+
+class TicketMessage(BaseModel):
+    """One turn of the conversation attached to a ticket."""
+
+    id: int
+    ticket_id: str
+    role: str
+    text: str
+    created_at: datetime
+
+
+class TicketConversation(BaseModel):
+    """
+    A ticket together with its follow-up history.
+
+    One call rather than two, because the portal needs both and the reporter
+    should not have to wait on two round trips to render a page they may be
+    reading on a phone with one bar of signal.
+    """
+
+    ticket: Ticket
+    messages: list[TicketMessage]
+
+
+class FollowUpRequest(BaseModel):
+    """A reporter's follow-up question about a ticket they already filed."""
+
+    message: str = Field(min_length=1, max_length=2000)
+
+
+class FollowUpResponse(BaseModel):
+    """
+    The assistant's answer about a known ticket.
+
+    `status` is echoed from the row rather than asked of the model, and so is
+    every fact in `ticket`. The model is given the ticket as context and asked
+    what it means; it is never asked to decide any of it. A response that
+    invents "a crew is on the way" when the row says `submitted` is the single
+    worst output this service could produce.
+    """
+
+    reply: str
+    status: TicketStatus
+    status_detail: str
+    ticket: Ticket
+    degraded: bool
+    model: str
+    safety_note: str = ""
