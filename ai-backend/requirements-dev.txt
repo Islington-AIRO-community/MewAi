@@ -1,0 +1,15 @@
+# Runtime dependencies for the API service.
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+httpx==0.28.1
+pydantic==2.10.4
+pydantic-settings==2.7.0
+asyncpg==0.30.0
+
+# Tests only. Kept separate from the runtime set above so the Docker image does
+# not carry them:
+#   pip install -r requirements-dev.txt && python -m pytest app/tests -q
+# The suite covers the deterministic intake rules and makes no model calls, so
+# it runs in milliseconds and never spends Gemini quota.
+-r requirements.txt
+pytest==8.3.4

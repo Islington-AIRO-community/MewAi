@@ -3,6 +3,7 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { signOut } from 'next-auth/react';
 import {
   LayoutDashboard,
   LifeBuoy,
@@ -46,7 +47,7 @@ function isActive(pathname: string, href: string) {
 
 export function SiteHeader({ onOpenSos }: { onOpenSos: () => void }) {
   const pathname = usePathname();
-  const { user, signOut } = useApp();
+  const { user } = useApp();
   const [menuOpen, setMenuOpen] = React.useState(false);
   const close = React.useCallback(() => setMenuOpen(false), []);
   const menuRef = useDismissable<HTMLDivElement>(menuOpen, close);
@@ -128,6 +129,16 @@ export function SiteHeader({ onOpenSos }: { onOpenSos: () => void }) {
               srLabel="Open SOS emergency distress reporting"
             />
 
+            {/* Branches on `user` alone, which is null while the session is
+                still loading as well as when signed out. Rendering nothing
+                during loading was tried and is worse: because these routes are
+                statically prerendered, the prerendered HTML always contains the
+                "Sign in" button, so hiding it during loading makes that button
+                blink out and back on *every* page load. This way the signed-out
+                case (the common one) is stable, and a signed-in visitor sees
+                the button swap to the account menu once the cookie is read.
+                Eliminating that swap entirely would mean server-rendering the
+                session on every route, i.e. making them all dynamic. */}
             {user ? (
               <div className="relative" ref={menuRef}>
                 <button
@@ -192,7 +203,13 @@ export function SiteHeader({ onOpenSos }: { onOpenSos: () => void }) {
                         role="menuitem"
                         type="button"
                         onClick={() => {
-                          signOut();
+                          // next-auth's signOut, not the store's old setter: it
+                          // clears the httpOnly session cookie, which is what
+                          // actually ends the session. `callbackUrl: '/'` lands
+                          // them somewhere sensible, and because `user` is
+                          // derived from the session the whole UI updates on its
+                          // own once the cookie is gone.
+                          void signOut({ callbackUrl: '/' });
                           close();
                         }}
                         className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm font-semibold text-emergency-700 no-tap-highlight hover:bg-emergency-50"

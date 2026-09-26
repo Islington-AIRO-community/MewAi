@@ -10,7 +10,9 @@ import {
   HeartPulse,
   Home,
   LifeBuoy,
+  Package,
   Search,
+  Shield,
   Siren,
   Soup,
   Users,
@@ -28,7 +30,8 @@ export type CategoryId =
   | 'search-rescue'
   | 'infrastructure'
   | 'missing-person'
-  | 'evacuation';
+  | 'evacuation'
+  | 'security';
 
 export interface CategoryMeta {
   id: CategoryId;
@@ -106,9 +109,86 @@ export const CATEGORIES: Record<CategoryId, CategoryMeta> = {
     description: 'Route guidance and transport out of an unsafe zone',
     defaultDepartmentId: 'dept-sar',
   },
+  security: {
+    id: 'security',
+    label: 'Security Support',
+    shortLabel: 'Security',
+    icon: Shield,
+    // Solid navy: the only category that claims the deep brand tone, so
+    // "protection" never reads as another pale chip in the triage list.
+    chip: 'bg-navy-800 text-white ring-navy-900',
+    description: 'Protection from violence, theft, armed threat or unsafe places',
+    defaultDepartmentId: 'dept-security',
+  },
 };
 
 export const CATEGORY_LIST = Object.values(CATEGORIES);
+
+/* ------------------------------------------------------------------ *
+ * Support types
+ *
+ * The four classes the AI assistant classifies a request into. Deliberately
+ * coarser than `CategoryId`: a victim asking for "food, clothes and a place to
+ * sleep" is one support type that the relief teams split across two
+ * departments, so this is the intake vocabulary and CATEGORIES is the routing
+ * vocabulary.
+ *
+ * Kept in lockstep with `SupportType` in `ai-backend/app/schemas.py`.
+ * ------------------------------------------------------------------ */
+
+export type SupportType = 'rescue' | 'relief-supplies' | 'medical' | 'security';
+
+export interface SupportTypeMeta {
+  id: SupportType;
+  label: string;
+  shortLabel: string;
+  icon: LucideIcon;
+  chip: string;
+  description: string;
+  /** What the reporter actually asked for, in their words. */
+  examples: string[];
+}
+
+export const SUPPORT_TYPES: Record<SupportType, SupportTypeMeta> = {
+  rescue: {
+    id: 'rescue',
+    label: 'Rescue team',
+    shortLabel: 'Rescue',
+    icon: LifeBuoy,
+    chip: 'bg-emergency-50 text-emergency-700 ring-emergency-200',
+    description: 'Trapped, stranded, or unable to get out on their own',
+    examples: ['Trapped under rubble', 'Cannot climb down', 'Stranded by flood water'],
+  },
+  'relief-supplies': {
+    id: 'relief-supplies',
+    label: 'Food, clothing & housing',
+    shortLabel: 'Supplies',
+    icon: Package,
+    chip: 'bg-alert-50 text-alert-700 ring-alert-200',
+    description: 'Food, clean water, warm clothes, blankets or a safe place to sleep',
+    examples: ['No food since yesterday', 'Need blankets', 'Nowhere safe to stay'],
+  },
+  medical: {
+    id: 'medical',
+    label: 'Medical support',
+    shortLabel: 'Medical',
+    icon: HeartPulse,
+    chip: 'bg-dispatch-50 text-dispatch-700 ring-dispatch-200',
+    description: 'Injury, sudden illness, or a health need that cannot wait',
+    examples: ['Not breathing', 'Broken leg', 'Out of medication'],
+  },
+  security: {
+    id: 'security',
+    label: 'Security support',
+    shortLabel: 'Security',
+    icon: Shield,
+    chip: 'bg-navy-800 text-white ring-navy-900',
+    description: 'Unsafe because of other people — violence, theft, armed threat',
+    examples: ['Threatened with a weapon', 'Being followed', 'House broken into'],
+  },
+};
+
+export const SUPPORT_TYPE_LIST: SupportTypeMeta[] = Object.values(SUPPORT_TYPES);
 
 /* ------------------------------------------------------------------ *
  * Priority
@@ -324,10 +404,77 @@ export const DEPARTMENTS: Department[] = [
     coverage: 'Eastvale industrial belt',
     color: 'emergency',
   },
+  {
+    id: 'dept-security',
+    name: 'Civil Safety & Security',
+    shortName: 'Security',
+    icon: Shield,
+    status: 'available',
+    statusLabel: 'Available',
+    crewsAvailable: 4,
+    crewsTotal: 6,
+    avgResponseMinutes: 14,
+    phone: '+1 (555) 011-3308',
+    coverage: 'City-wide',
+    color: 'navy',
+  },
 ];
 
 export function getDepartment(id: string): Department {
   return DEPARTMENTS.find((d) => d.id === id) ?? DEPARTMENTS[0];
+}
+
+/**
+ * Map the intake support types onto the category + department that actually
+ * handle them.
+ *
+ * A single ticket can carry several support types, so this returns every
+ * candidate pair and lets the caller rank them. `routingRank` is that ranking:
+ * a person who is injured *and* has no shelter is an EMS job first, because
+ * that is the crew that must reach them first.
+ */
+export const SUPPORT_ROUTING: Record<
+  SupportType,
+  { category: CategoryId; departmentId: string }
+> = {
+  medical: { category: 'medical', departmentId: 'dept-medical' },
+  rescue: { category: 'search-rescue', departmentId: 'dept-sar' },
+  security: { category: 'security', departmentId: 'dept-security' },
+  'relief-supplies': { category: 'food-water', departmentId: 'dept-logistics' },
+};
+
+const ROUTING_RANK: Record<SupportType, number> = {
+  medical: 0,
+  rescue: 1,
+  security: 2,
+  'relief-supplies': 3,
+};
+
+/** The category/department pair for a multi-type ticket, most urgent first. */
+export function routeForSupportTypes(types: SupportType[]): {
+  category: CategoryId;
+  departmentId: string;
+} {
+  const ordered = [...types].sort(
+    (a, b) => ROUTING_RANK[a] - ROUTING_RANK[b],
+  );
+  const primary = ordered[0];
+  if (!primary) return { category: 'medical', departmentId: 'dept-medical' };
+  return SUPPORT_ROUTING[primary];
+}
+
+/** Every department a ticket needs to reach, most urgent first, de-duplicated. */
+export function departmentsForSupportTypes(types: SupportType[]): Department[] {
+  const ordered = [...types].sort((a, b) => ROUTING_RANK[a] - ROUTING_RANK[b]);
+  const seen = new Set<string>();
+  const out: Department[] = [];
+  for (const type of ordered) {
+    const id = SUPPORT_ROUTING[type].departmentId;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push(getDepartment(id));
+  }
+  return out;
 }
 
 export const DEPARTMENT_STATUS_STYLES: Record<
@@ -413,7 +560,8 @@ export type ExtractedIntent =
   | 'search-rescue'
   | 'missing-person'
   | 'evacuation'
-  | 'infrastructure';
+  | 'infrastructure'
+  | 'security';
 
 export interface ActionCard {
   id: string;
@@ -442,6 +590,13 @@ export interface ChatMessage {
   pending?: boolean;
   /** Confidence of the intent extraction, 0–1 */
   confidence?: number;
+  /**
+   * Served from the scripted offline set rather than the live assistant.
+   *
+   * Rendered with a visible marker, never silently: a fake answer shown as a
+   * real one during an emergency is the one failure mode worth UI space.
+   */
+  offline?: boolean;
 }
 
 export type VoiceState = 'idle' | 'connecting' | 'listening' | 'thinking' | 'speaking' | 'muted' | 'error';

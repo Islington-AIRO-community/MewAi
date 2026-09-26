@@ -7,6 +7,8 @@ import { FileText, LayoutDashboard, LifeBuoy, MessageSquareText } from 'lucide-r
 import { cn } from '@/lib/utils';
 import { useApp } from '@/lib/store';
 import { AppProvider } from '@/lib/store';
+import { useAiChat } from '@/lib/use-ai-chat';
+import { SessionProvider } from 'next-auth/react';
 import { ToastProvider, useToast } from '@/components/ui/toast';
 import { SiteHeader } from './site-header';
 import { SosFloatingBar } from '@/components/emergency/sos-floating-bar';
@@ -27,11 +29,17 @@ const MOBILE_NAV = [
  */
 export function AppShell({ children }: { children: React.ReactNode }) {
   return (
-    <AppProvider>
-      <ToastProvider>
-        <Shell>{children}</Shell>
-      </ToastProvider>
-    </AppProvider>
+    // Order is load-bearing. `useSession` throws if it is not inside a
+    // SessionProvider, and AppProvider calls it to derive the session user, so
+    // SessionProvider has to stay on the *outside*. Swapping these two takes
+    // down every route at once rather than degrading one component.
+    <SessionProvider>
+      <AppProvider>
+        <ToastProvider>
+          <Shell>{children}</Shell>
+        </ToastProvider>
+      </AppProvider>
+    </SessionProvider>
   );
 }
 
@@ -40,6 +48,11 @@ function Shell({ children }: { children: React.ReactNode }) {
   const { reports, actionCards } = useApp();
   const { toast } = useToast();
   const pathname = usePathname();
+
+  // The floating assistant's intake lives here, at the surface that owns it, so
+  // the ticket draft survives navigating between routes (state is in-memory, so
+  // a reload still resets it — see AGENTS.md).
+  const ai = useAiChat();
 
   const pendingCards = actionCards.filter((c) => c.status === 'pending').length;
   const activeCount = reports.filter((r) => r.currentStage !== 'resolved').length;
@@ -84,7 +97,7 @@ function Shell({ children }: { children: React.ReactNode }) {
           The assistant dock sits directly above the SOS bar (≈6.5rem tall on
           desktop) so the two never overlap. */}
       <div className="fixed bottom-[calc(env(safe-area-inset-bottom)+7rem)] right-4 z-[61] hidden flex-col items-end sm:flex">
-        <ReliefAssistant variant="floating" />
+        <ReliefAssistant variant="floating" ai={ai} />
       </div>
 
       <SosFloatingBar onOpenSos={() => setSosOpen(true)} unreadCount={activeCount} />
