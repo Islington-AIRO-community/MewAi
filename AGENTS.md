@@ -1,9 +1,9 @@
 # AGENTS.md
 
-Next.js 14 App Router demo UI for a post-disaster relief platform. Front-end only:
-no backend, no database, no network calls. `README.md` is the product/design
-reference and is mostly accurate — but it gets the component architecture wrong
-(see below). Trust this file on that point.
+Next.js 14 App Router UI for a post-disaster relief platform, plus a real
+Gemini-backed AI intake service in `ai-backend/`. `README.md` is the
+product/design reference and is mostly accurate — but it gets the component
+architecture wrong (see below). Trust this file on that point.
 
 ## Commands
 
@@ -15,23 +15,33 @@ npm run build       # runs lint + typecheck, then prerenders
 npm start           # serve the build (needs a prior `npm run build`)
 ```
 
-Node 20+ (developed on 22). There is **no test suite and no test runner** — no
-jest/vitest/playwright/cypress is installed and there is no `test` script. Don't
-add a `npm test` invocation or assume fixtures exist. The only automated
-verification is `typecheck` + `lint` + `build`; all three pass clean at HEAD, so
-treat any new output from them as a regression you introduced.
+Node 20+ (developed on 22). There is **no JS test suite and no JS test runner** —
+no jest/vitest/playwright/cypress is installed and there is no `test` script.
+Don't add an `npm test` invocation or assume fixtures exist. The only automated
+verification of the front end is `typecheck` + `lint` + `build`; all three pass
+clean, so treat any new output from them as a regression you introduced.
 
 `build` already runs lint and typecheck, so run `build` alone as the full gate.
+
+The Python service is separate and **does** have tests:
+
+```bash
+cd ai-backend
+.venv/bin/python -m pytest app/tests -q   # 43 tests, no model calls, no quota
+./dev.sh                                 # venv + deps + uvicorn on :8000
+docker compose up -d db                  # Postgres
+```
 
 ## Architecture: nearly everything is a client component
 
 The README says "routes stay server components, interactive things are client
 islands." That is true for exactly one route. In reality:
 
-- **Server components:** only `app/layout.tsx` and `app/chat/page.tsx`.
+- **Server components:** only `app/layout.tsx` and `app/chat/page.tsx`, plus the
+  two route handlers under `app/api/ai/`.
 - **Everything else is `'use client'`** — `app/page.tsx`, `login`, `dashboard`,
   `reports`, `reports/[id]`, `resources`, all of `components/**`, `lib/store.tsx`,
-  and `lib/hooks.ts`.
+  `lib/hooks.ts`, `lib/use-ai-chat.ts`, and `lib/ai-client.ts`.
 
 Consequences an agent will trip over:
 
@@ -40,7 +50,8 @@ Consequences an agent will trip over:
   `metadata` today. To add per-route metadata, the page must first lose its
   `'use client'` directive.
 - Route params come from `useParams()`, not props. `/reports/[id]` is the only
-  dynamic route (`ƒ` in build output) because there is no `generateStaticParams`.
+  dynamic page route (`ƒ` in build output) because there is no
+  `generateStaticParams`.
 - A missing report renders an **in-page "Report not found"** view, not
   `notFound()` — the page can't call it. There is no custom `not-found.tsx`, so
   only truly unmatched routes hit the Next.js default 404.
@@ -52,12 +63,90 @@ Consequences an agent will trip over:
 `metadata` and wraps `chat-experience.tsx` in `<Suspense>` because the island
 calls `useSearchParams()`. Preserve that boundary if you touch either file.
 
+## The AI intake
+
+`ai-backend/` is a standalone FastAPI service. It talks to Gemini, decides what
+is still missing, and writes tickets to Postgres. The browser never talks to it
+directly.
+
+```
+browser ──► /api/ai/chat      (Next route handler) ──► POST /api/chat/message
+browser ──► /api/ai/tickets   (Next route handler) ──► POST /api/tickets
+                                      │                        │
+                                 AI_API_URL              Gemini + Postgres
+```
+
+- `app/api/ai/_shared.ts` holds the shared plumbing: `backendUrl()` (reads
+  `process.env.AI_API_URL`), the 60s timeout, and the `502 backend_unreachable`
+  shape. Both handlers are `force-dynamic` + `runtime: 'nodejs'`.
+- `lib/ai-client.ts` is the typed browser client. It talks to the proxy paths
+  only, and **resolves rather than rejects** on an expected failure — "the
+  assistant is unavailable" is a state the UI renders, not an exception it
+  catches.
+- `lib/use-ai-chat.ts` is the conversation loop: transcript, ticket draft,
+  review/submit lifecycle. It calls the store's `sendMessage` with
+  `deferReply: true` and then appends the real answer itself.
+- `components/assistant/ticket-review.tsx` is the review + edit form and the
+  post-submit receipt. It replaces the composer when the draft is complete.
+
+Three things an agent will get wrong here:
+
+1. **The hook is a required prop, not internal.** `ReliefAssistant` takes `ai:
+   AiChatApi`. Each mounting surface calls `useAiChat()` itself —
+   `components/layout/app-shell.tsx` for the floating launcher,
+   `app/chat/chat-experience.tsx` for `/chat` (which also needs it for the quick
+   phrases and the `?intent=` deep link). Two instances would mean two ticket
+   drafts, and the review form would show a different one than the conversation
+   is building.
+2. **`app/api/ai/*` returns 502, not 500, when the backend is down.** The store
+   catches and falls back to the scripted offline set. Don't "fix" this into a
+   throw.
+3. **The wire format is split.** The response *envelope* is snake_case
+   (`next_questions`, `is_complete`, `safety_note`), the `draft` object is
+   camelCase (`reporterName`, `victimPhone`, `supportNeeded`,
+   `onBehalfOfOther`), and `missing`/`next_questions` use camelCase `SlotName`
+   values as keys. `lib/ai-client.ts` encodes all of this; don't rename.
+
+### Readiness is never the model's call
+
+`ai-backend/app/slots.py` is the single authority on "is this ticket complete",
+and it is duplicated in `lib/ticket-intake.ts` so the form can show what is
+missing *while the user types* without a round trip per keystroke. The two must
+agree — `missingSlots()` in TS mirrors `missing_slots()` in Python exactly. If
+you change one, change both, and extend `ai-backend/app/tests/`.
+
+The rules:
+
+- Always required: reporter name, reporter phone, summary, location, ≥1 support
+  type, urgency.
+- Required **only** when `on_behalf_of_other`: victim name, victim phone. A
+  self-report is complete with no victim fields at all.
+- `peopleAffected` is optional and never blocks.
+- A phone with fewer than 6 digits counts as missing, not captured. `911` is a
+  valid emergency number but not a usable contact number.
+- The timestamp is stamped server-side at insert. It is never a model output,
+  and the review form shows it as an explanation rather than an editable field.
+
+### Degradation is visible, never silent
+
+If Gemini is unavailable the service still answers: it returns a real question
+with `degraded: true` and `confidence: 0.0`, preserving any hand edits so an
+outage cannot cost the reporter a correction. The UI marks those bubbles
+"Offline reply" with a dashed border and `ChatMessage.offline`. **Never fake a
+model answer silently** — during an emergency a canned reply presented as real
+is worse than a visible gap.
+
+`useAiChat` deliberately does *not* let the store's scripted reply land first.
+`sendMessage(..., { deferReply: true })` appends only the user message, so the
+canned answer is a fallback rather than something the real answer follows.
+
 ## State: in-memory only, and it resets on refresh
 
 `lib/store.tsx` exports `AppProvider` / `useApp`, mounted in
 `components/layout/app-shell.tsx` (alongside `ToastProvider`). It is the single
-source of truth: `signIn`/`signOut`, `sendMessage`, `confirmActionCard`,
-`dismissActionCard`, `advanceStage`, `triggerSos`, `getReport`.
+source of truth: `signIn`/`signOut`, `sendMessage`, `appendAssistantMessage`,
+`scriptedReplyFor`, `confirmActionCard`, `dismissActionCard`,
+`createReportFromTicket`, `advanceStage`, `triggerSos`, `getReport`.
 
 - All state is plain `useState`. **There is no persistence.** A hard refresh or a
   new tab resets the session user, the chat transcript, and every report created
@@ -65,6 +154,8 @@ source of truth: `signIn`/`signOut`, `sendMessage`, `confirmActionCard`,
 - Consequence: create a report via SOS, hard-refresh its `/reports/[id]` URL, and
   you get "Report not found" — the store came back empty. This is expected
   behavior, not a bug to chase.
+- The AI ticket is the one exception: it is a real Postgres row, so it survives a
+  reload even though the in-memory `Report` mirrored from it does not.
 - `lib/hooks.ts` exports `useLocalStorage` and `useIsMobile`, and **both are dead
   code — zero call sites.** Don't assume state already persists, and don't assume
   a mobile hook is in use. Wire them up deliberately or leave them.
@@ -75,6 +166,20 @@ source of truth: `signIn`/`signOut`, `sendMessage`, `confirmActionCard`,
 - Mock data and every taxonomy (categories, priorities + SLA minutes, stages,
   departments, status styles) live in `lib/mock-data.ts` and `lib/types.ts`.
   Icons are stored as components in those taxonomies.
+
+### Two vocabularies for "what kind of help"
+
+`CategoryId` (8 values) is the **routing** vocabulary used by the dashboard and
+reports. `SupportType` (4 values) is the **intake** vocabulary the AI
+classifies into: `rescue`, `relief-supplies`, `medical`, `security`. They are
+deliberately different resolutions — "food, clothes and a place to sleep" is one
+support type that relief splits across two departments.
+
+`SUPPORT_ROUTING` + `routeForSupportTypes()` in `lib/types.ts` map between them,
+ranked so the crew that must arrive first leads (`medical → rescue → security →
+relief-supplies`). `security` was added along with the `dept-security`
+department; both are new, and `CATEGORY_ICONS` in `app/dashboard/page.tsx` is a
+separate hand-maintained map that also needed the entry.
 
 ## Time is frozen — this causes hydration bugs
 
@@ -89,6 +194,11 @@ anchor.
   broken three routes (#425, #418, #423).
 - The sanctioned exceptions are the `nowIso()` calls in `lib/store.tsx`, which
   stamp objects created *after* hydration and only ever render client-side.
+- The ticket receipt in `components/assistant/ticket-review.tsx` renders
+  `new Date(ticket.created_at)`. That is safe only because `created_at` is
+  stamped by Postgres, the receipt renders **after** a user action, and the
+  review step is unreachable until a reply has arrived. Keep it that way — a
+  `new Date()` in a value that renders on first paint is a mismatch.
 - If you add a time display, thread the anchor through instead of defaulting to
   the real clock.
 
@@ -129,6 +239,12 @@ keyframes, and easings `out-expo` / `calm`.
 2. **`Button` is `whitespace-nowrap` by default.** Long labels are unshrinkable;
    inside a grid you must pass `whitespace-normal min-w-0` or the layout overflows
    (this broke 7 category tiles at 1280–1536px).
+2b. **A grid's column count must divide the item count.** The dashboard's "I need
+   help with" grid renders `CATEGORIES`, now 8 entries. It was `lg:grid-cols-7`
+   and adding `security` orphaned a tile on its own row. It is now
+   `grid-cols-2 sm:grid-cols-4 xl:grid-cols-8` — 2, 4 and 8 all divide 8, so no
+   viewport width produces a gap. If you add or remove a category, recheck this
+   grid before you recheck anything else.
 3. **Fixed bottom furniture shares height tokens.** The mobile tab bar uses
    `var(--tabbar-h)` and the SOS strip is offset by
    `calc(env(safe-area-inset-bottom) + var(--tabbar-h))`. Never hardcode a rem
@@ -167,11 +283,36 @@ There is no a11y test, so these break silently:
 
 ## Environment
 
-`.env` exists in the working tree but is **gitignored and untracked, is not valid
-dotenv** (a single bare token, no `KEY=value`), and **nothing in the app reads
-`process.env` or any `NEXT_PUBLIC_*` var**. There is no env-driven config today.
-If you introduce one, write a proper `KEY=value` and read it explicitly — don't
-assume the existing file is wired up. Don't commit it.
+There are two env files, both gitignored, both read server-side only.
+
+**Root `.env`** — one variable, read by the proxy handlers:
+
+```
+AI_API_URL=http://127.0.0.1:8000
+```
+
+Read via `process.env` in `app/api/ai/_shared.ts`. It is **not** a
+`NEXT_PUBLIC_` var and must not become one; the whole point of the proxy is that
+the browser never learns the backend's address or key.
+
+**`ai-backend/.env`** — `GEMINI_API_KEY`, `DATABASE_URL`, `GEMINI_MODELS`,
+timeouts, `CORS_ORIGINS`. Read by `pydantic-settings` in `ai-backend/app/config.py`.
+`.env.example` in both directories is the committed template.
+
+- **The Gemini key must never be committed, and never sent to a browser.** It is
+  in `ai-backend/.env` only. If a connection problem tempts you to move it to a
+  `NEXT_PUBLIC_` var, the fix is wrong, not the symptom.
+- Two config traps, both hit already:
+  - List-valued settings need `Annotated[tuple[str, ...], NoDecode]`
+    (`gemini_models`, `cors_origins`). Without it pydantic tries to JSON-parse a
+    comma-separated env value and dies with `SettingsError: error parsing value
+    for field "gemini_models"`.
+  - `AI_API_URL` has no default. Missing it should be a loud startup error, not a
+    silent fallback to localhost that fails per-request in production.
+- The service **starts even when Postgres is unreachable** and logs
+  `postgres unavailable, ticket creation disabled`. Chat still works; `POST
+  /api/tickets` returns 503. `/api/ready` reports `database_connected: false`.
+  This is intentional — intake must survive a database blip.
 
 ## Performance invariants
 
