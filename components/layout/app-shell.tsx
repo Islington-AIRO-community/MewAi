@@ -154,6 +154,7 @@ function MobileTabBar({ pathname }: { pathname: string }) {
 }
 
 function SiteFooter({ onOpenSos }: { onOpenSos: () => void }) {
+  const { user } = useApp();
   return (
     <footer className="no-print mt-16 border-t border-navy-200 bg-white pb-[calc(env(safe-area-inset-bottom)+var(--tabbar-h)+var(--sos-strip-h)+0.75rem)] sm:pb-10">
       <div className="container py-10">
@@ -181,6 +182,10 @@ function SiteFooter({ onOpenSos }: { onOpenSos: () => void }) {
               links={[
                 { label: 'Dashboard', href: '/dashboard' },
                 { label: 'My reports', href: '/reports' },
+                /* Only when there is an account to attach them to. `/tickets` is
+                   gated, so a signed-out visitor gets a link that throws them
+                   into a Google round-trip to reach an empty list. */
+                ...(user ? [{ label: 'My tickets', href: '/tickets' as const }] : []),
                 { label: 'Sign in', href: '/login' },
               ]}
             />

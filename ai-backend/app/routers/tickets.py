@@ -24,6 +24,7 @@ from ..schemas import (
     FollowUpRequest,
     FollowUpResponse,
     Ticket,
+    TicketClaim,
     TicketCreate,
     TicketDraft,
     TicketListResponse,
@@ -39,6 +40,19 @@ router = APIRouter(prefix="/tickets", tags=["tickets"])
 
 class StatusUpdate(BaseModel):
     status: TicketStatus
+
+
+# One message for every way a claim can fail, with nothing echoed back.
+#
+# An earlier version of this endpoint said `No ticket with id {ticket_id}.`, on
+# the reasoning that the id was the caller's own input so echoing it revealed
+# nothing. That is true of the echo but wrong about the consequence: a wrong
+# *phone* on a real reference and a wrong *reference* then produce different
+# sentences, which is enough to tell a caller that a given reference exists.
+# A constant makes indistinguishability true by construction instead of by
+# argument, and there is nothing here for a caller to do with a more specific
+# message anyway.
+_CLAIM_REFUSED = "That reference and phone number do not match a ticket."
 
 
 class TicketStats(BaseModel):
@@ -209,6 +223,55 @@ async def list_my_tickets(
         owner, limit=limit, offset=offset
     )
     return TicketListResponse(total=total, tickets=page)
+
+
+@router.post(
+    "/claim",
+    response_model=Ticket,
+    summary="Attach a ticket you filed signed out to your account",
+)
+async def claim_ticket(payload: TicketClaim, request: Request) -> Ticket:
+    """
+    Recover an orphaned ticket by proving you are the person who filed it.
+
+    Anonymous intake is a supported path, but a ticket filed without an account
+    belongs to nobody and so could never be reopened — not by the reporter, not
+    by anyone. This is the way back, and the proof is the reporter's own phone
+    number: the reference alone is guessable because the ids are sequential, and
+    the phone is something the caller had to know already, because they typed it
+    into the ticket.
+
+    Deliberately declared *above* the `/{ticket_id}` routes below. There is no
+    `POST /tickets/{ticket_id}` today so nothing can actually shadow this, but
+    the ordering costs nothing and removes the need to keep re-deriving that.
+
+    Every failure is one identical 404. A caller must not be able to tell a
+    wrong phone from a wrong reference, and neither may tell whether a given
+    reference exists at all — which is why this cannot report "that ticket
+    already has an owner" separately either. The owner comes from the header, so
+    the caller can only ever claim *for themselves*.
+    """
+    owner = _request_owner(request)
+    if not owner:
+        # Claiming exists to attach a ticket to an account, so an anonymous
+        # caller has nothing to attach it to. Same wording as every other
+        # failure below: one message for all of them.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=_CLAIM_REFUSED
+        )
+    store = _store(request)
+    # `normalise_phone` on the submitted value, because the stored one is already
+    # normalised and a reporter who retypes "07700 900123" must still match the
+    # "07700900123" that was saved. Without this, correct users get locked out of
+    # their own ticket over a space.
+    ticket = await store.claim(
+        payload.ticket_id.strip(), owner, normalise_phone(payload.reporter_phone)
+    )
+    if ticket is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=_CLAIM_REFUSED
+        )
+    return ticket
 
 
 @router.get(

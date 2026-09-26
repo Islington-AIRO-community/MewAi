@@ -27,7 +27,7 @@ The Python service is separate and **does** have tests:
 
 ```bash
 cd ai-backend
-.venv/bin/python -m pytest app/tests -q   # 77 tests, no model calls, no quota
+.venv/bin/python -m pytest app/tests -q   # 86 tests, no model calls, no quota
 ./dev.sh                                 # venv + deps + uvicorn on :8000
 docker compose up -d db                  # Postgres
 ```
@@ -287,11 +287,46 @@ table.
   authoritative.
 - **A ticket filed signed out belongs to nobody** — therefore to no caller,
   including whoever filed it. Anonymous intake is a real and supported path; it
-  just has no portal. `owner_email = NULL` is normal, not an error.
+  just has no portal *until the reporter claims it* (below).
 - **Wrong owner and missing ticket are both 404**, never 403.
 - The reporter's **name and phone are deliberately absent from the prompt text**
   (`_ticket_facts`), even though the row has them. That text goes to a model; a
   reply quoting someone's number back at them is a leak that buys nothing.
+
+### Claiming an orphan is the only write to `owner_email` after insert
+
+`POST /api/tickets/claim` lets a signed-in reporter attach a ticket they filed
+signed out, proving it with **the phone number they gave when they filed it**.
+Without it they hold a reference code and no way to use it, which is a worse
+outcome than asking for a login up front.
+
+Three things make it safe, and all three are load-bearing:
+
+- **The guard is in the SQL, not in Python.** `TicketStore.claim` is a single
+  `UPDATE … WHERE id = $2 AND owner_email IS NULL AND reporter_phone = $3`. A
+  read-then-write looks equivalent and is not: two callers racing for the same
+  orphan would both read `NULL` and the second write would win. It reads as an
+  ordinary `UPDATE` at a glance, so it is the thing most likely to be
+  "simplified" into a bug — don't.
+- **`owner_email IS NULL` is what stops account takeover.** Without it, sign in
+  as anyone, name a victim, produce their phone number, and take their ticket.
+  It also makes a second claim a no-op, so the loser of a race gets a 404.
+- **The phone is compared after `normalise_phone`.** It is normalised on insert,
+  so the row holds `07700900123` whatever the reporter typed. Comparing raw
+  strings would tell someone who retypes `07700 900 123` that their ticket does
+  not exist, during a disaster, with no other way to find out what is happening.
+
+The account comes from the `x-ticket-owner` header, never the body, so a caller
+can only claim *for themselves*. **Every failure returns one fixed string** — no
+id echoed, so a wrong phone cannot be told from a wrong reference. An earlier
+version echoed `No ticket with id {id}.` and the test caught it; that reasoning
+("the id is the caller's own input") is wrong, because a wrong phone on a real
+reference and a wrong reference then produce different sentences. The proxy
+answers malformed input with 404 rather than 422 for the same reason.
+
+Not yet done: rate limiting. The reference is guessable and the phone is 10
+digits, so practical online guessing is the only thing stopping a determined
+caller. Revisit before this faces the public internet.
 
 ### The backend's own auth is the proxy, and only the proxy
 

@@ -204,6 +204,41 @@ class TicketStore:
         )
         return _to_ticket(row) if row else None
 
+    async def claim(
+        self, ticket_id: str, owner_email: str, reporter_phone: str
+    ) -> Ticket | None:
+        """
+        Attach an orphaned ticket to an account, proving it with the phone number.
+
+        **The two conditions in the `WHERE` clause are the entire security model,
+        and they belong here rather than in Python.** A read-then-write would look
+        equivalent and would not be:
+
+        - `owner_email IS NULL` means only a ticket that belongs to nobody can be
+          claimed. Any owned ticket is off limits, so this can never be used to
+          take someone else's ticket away from them. It also makes a second claim
+          of the same row a no-op instead of an overwrite, which is the whole
+          point of doing it in one statement — two people racing for the same
+          orphan would otherwise both read `NULL` and the second write would win.
+        - `reporter_phone = $3` is the second factor. The reference is sequential
+          and therefore guessable; the phone number is the part the caller had to
+          already know, because they typed it into the ticket.
+
+        Zero rows returned means every one of those failed, and the caller turns
+        that into a single indistinguishable 404 — a wrong phone must not be
+        distinguishable from a wrong reference.
+        """
+        pool = self._require_pool()
+        row = await pool.fetchrow(
+            f"UPDATE relief_tickets SET owner_email = $1, updated_at = now() "
+            f"WHERE id = $2 AND owner_email IS NULL AND reporter_phone = $3 "
+            f"RETURNING {_COLUMNS}",
+            owner_email,
+            ticket_id,
+            reporter_phone,
+        )
+        return _to_ticket(row) if row else None
+
     # ---- reads -------------------------------------------------------- #
 
     async def get(self, ticket_id: str) -> Ticket | None:

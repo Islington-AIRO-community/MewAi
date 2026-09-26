@@ -140,6 +140,27 @@ export function fetchAdminQueue(
   return request(`/api/ai/admin/tickets${query}`);
 }
 
+/**
+ * Attach a ticket that was filed while signed out to the signed-in account.
+ *
+ * The proof is the reference plus the phone number the reporter gave when they
+ * filed it. Both go in the body; the account comes from the session cookie, so
+ * this can only ever claim a ticket *for the caller*.
+ *
+ * A wrong reference and a wrong phone are the same `not_found` on purpose. The
+ * UI must not be able to say which one was wrong, and neither should a caller be
+ * able to learn that a reference exists.
+ */
+export function claimTicket(
+  ticketId: string,
+  reporterPhone: string,
+): Promise<PortalResult<StoredTicket>> {
+  return request('/api/ai/tickets/claim', {
+    method: 'POST',
+    body: JSON.stringify({ ticketId, reporterPhone }),
+  });
+}
+
 /** Human wording for a failure, used where the UI has to say it inline. */
 export function describePortalError(error: PortalError): string {
   switch (error.kind) {
@@ -203,6 +224,56 @@ export function useMyTickets(): AsyncState<StoredTicket[]> & { reload: () => voi
   }, [nonce]);
 
   return { ...state, reload: () => setNonce((n) => n + 1) };
+}
+
+/**
+ * Submit a claim for a ticket that was filed without an account.
+ *
+ * Kept separate from `useMyTickets` rather than folded into it, because the
+ * failure copy differs: `describePortalError` says "no such ticket on your
+ * account", which is actively wrong here — the ticket is not on anyone's account
+ * yet, that is the whole problem. The claim form therefore renders the message
+ * the proxy sends, not the generic one.
+ *
+ * `onClaimed` fires only on success, so the caller can reload the list without
+ * this hook knowing anything about the list.
+ */
+export function useClaimTicket(onClaimed?: () => void): {
+  claiming: boolean;
+  error: string | null;
+  clearError: () => void;
+  claim: (ticketId: string, reporterPhone: string) => Promise<boolean>;
+} {
+  const [claiming, setClaiming] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+  // Held in a ref so a caller re-rendering mid-request cannot swap the callback
+  // out from under an in-flight claim.
+  const onClaimedRef = React.useRef(onClaimed);
+  onClaimedRef.current = onClaimed;
+
+  const claim = React.useCallback(async (ticketId: string, reporterPhone: string) => {
+    setClaiming(true);
+    setError(null);
+    const result = await claimTicket(ticketId, reporterPhone);
+    setClaiming(false);
+    if (result.ok) {
+      onClaimedRef.current?.();
+      return true;
+    }
+    // A 404 here is the expected answer for a mistyped reference, and it is
+    // deliberately the same message for a wrong phone. Everything else falls
+    // back to the shared wording.
+    setError(
+      result.error.kind === 'not_found'
+        ? 'That reference and phone number do not match a ticket. Check both and try again.'
+        : describePortalError(result.error),
+    );
+    return false;
+  }, []);
+
+  const clearError = React.useCallback(() => setError(null), []);
+
+  return { claiming, error, clearError, claim };
 }
 
 /**

@@ -195,6 +195,20 @@ class TicketCreate(BaseModel):
         return errors
 
 
+class TicketClaim(BaseModel):
+    """
+    Proof that the caller is the person who filed an orphaned ticket.
+
+    `reporter_phone` is the second factor, and it is not a guess the caller has
+    to invent: it is the number they already typed into the ticket. Knowing the
+    reference alone is not enough, and the reference alone is guessable, because
+    the ids are sequential.
+    """
+
+    ticket_id: str = Field(min_length=1, max_length=32)
+    reporter_phone: str = Field(min_length=6, max_length=40)
+
+
 class Ticket(BaseModel):
     """A stored ticket, as returned by the API."""
 
