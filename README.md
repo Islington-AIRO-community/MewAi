@@ -5,10 +5,10 @@ relief assistant (text **and** hands-free voice) that interviews you and files a
 real ticket, live report tracking with a department-routing timeline, and a
 persistent one-tap SOS surface.
 
-> **Status:** the UI is a demo over mock data, with one real subsystem: the AI
+> **Status:** the UI is a demo over mock data, with two real subsystems: the AI
 > intake in `ai-backend/` talks to Gemini, collects a relief ticket, and writes
-> it to Postgres. Everything else is client state. There is no real emergency
-> dispatch and no admin queue.
+> it to Postgres, and sign-in is real Google OAuth. Everything else is client
+> state. There is no real emergency dispatch and no admin queue.
 
 ---
 
@@ -16,6 +16,7 @@ persistent one-tap SOS surface.
 
 - [Quick start](#quick-start)
 - [The AI intake](#the-ai-intake)
+- [Authentication](#authentication)
 - [What it does](#what-it-does)
 - [Tech stack](#tech-stack)
 - [Routes](#routes)
@@ -58,13 +59,13 @@ Current status — all three pass clean:
 
 | Check | Result |
 | --- | --- |
-| `npm run build` | 11 routes (8 static, 3 dynamic), compiles without warnings |
+| `npm run build` | 12 routes (8 static, 4 dynamic) + edge middleware, compiles without warnings |
 | `npm run typecheck` | no errors |
 | `npm run lint` | no warnings or errors |
 
 ### Try it in 60 seconds
 
-1. Open `/` → **Sign in with Google** (simulated OAuth, no network call).
+1. Open `/` → **Sign in with Google** (real OAuth — see [Authentication](#authentication)).
 2. On `/dashboard`, watch the four counters count up and the triage feed populate.
 3. Open the floating assistant orb (bottom-right) → switch to **Live voice** →
    send a message like *"we are trapped"* or *"someone cannot breathe"*.
@@ -168,6 +169,81 @@ More detail in [`ai-backend/README.md`](ai-backend/README.md).
 
 ---
 
+## Authentication
+
+Sign-in is real Google OAuth via **next-auth 4.24** (v4, not Auth.js v5 — v5
+targets Next 15). The browser never sees the client secret; the handshake runs
+entirely in `/api/auth/[...nextauth]`.
+
+### Setting it up
+
+Sign-in fails at Google's consent screen until the client exists. Create one at
+[Google Cloud → Credentials](https://console.cloud.google.com/apis/credentials)
+as a **Web application**, then:
+
+```bash
+cp .env.example .env      # then fill in the four variables below
+```
+
+| Variable | Where it comes from |
+| --- | --- |
+| `GOOGLE_CLIENT_ID` | the OAuth client's ID |
+| `GOOGLE_CLIENT_SECRET` | the OAuth client's secret |
+| `NEXTAUTH_SECRET` | `openssl rand -base64 32` |
+| `NEXTAUTH_URL` | this app's origin, e.g. `http://localhost:3000` |
+
+Register the redirect URI with Google **exactly** as NextAuth expects, or Google
+rejects the callback:
+
+```
+http://localhost:3000/api/auth/callback/google
+https://your-domain/api/auth/callback/google
+```
+
+All four are read server-side. None is a `NEXT_PUBLIC_` variable and none should
+become one.
+
+### What is gated, and what deliberately is not
+
+`middleware.ts` gates **`/reports` only**. Everything else — the landing page,
+`/dashboard`, `/chat`, `/resources`, and the whole SOS flow — works signed out.
+
+That is a deliberate product decision, not an oversight. Putting a Google
+round-trip in front of someone asking for help during a disaster does real
+harm: outages are exactly when this app matters, the person may have no Google
+account, and Google's consent screen is another host that can be unreachable.
+The login page's promise that you can send an SOS without signing in is enforced
+by the matcher, not just asserted in copy.
+
+### The gate is a redirect, not authorization
+
+Worth being blunt about: **nothing is being secured.** The reports behind
+`/reports` are mock fixtures in React state — there is no user-scoped data to
+protect, and the store still resets on a hard refresh even while signed in. So
+signing in currently implies a persistence this app cannot yet deliver. The gate
+becomes a real access control when a users table lands, which is deferred along
+with the admin queue. Until then, treat it as a UX affordance.
+
+### How it is wired
+
+- `lib/auth.ts` holds `authOptions` and is **server-only**.
+- `lib/session-user.ts` projects a session onto the app's `SessionUser`. The
+  store's `user` is *derived* from the session rather than written by the
+  client, so there is no forgeable second source of truth.
+- `SessionProvider` wraps `AppProvider`. That order is load-bearing: `useSession`
+  throws without a provider, and `AppProvider` calls it.
+- Google's avatar URL is deliberately discarded. This app renders no images
+  anywhere, so following `picture` would add an external request per page load
+  for a cosmetic gain; `Avatar` falls back to initials.
+- Sessions are JWTs, so there is no database. Sign-out clears the cookie; a token
+  captured beforehand stays valid until it expires.
+
+See `AGENTS.md` for the traps — the middleware edge-runtime constraint, the
+`callbackUrl` open-redirect guard, and why a statically prerendered gated route
+still has session-free HTML.
+
+---
+
 ## What it does
 
 ### 1. Navigation, auth and system status
@@ -257,6 +333,7 @@ full-screen experience at `/chat`.
 | Animation | **Framer Motion 11** | Subtle, interruptible transitions |
 | Icons | **Lucide React** | Consistent, accessible icon set |
 | Primitives | Hand-rolled `cva` + `tailwind-merge` | shadcn-style API with **zero** CLI/network install |
+| Auth | **next-auth 4.24** + Google OAuth | Real sign-in, httpOnly JWT cookie, no client-side user state |
 | State | React Context (`AppProvider`) | One client state tree, no Redux needed |
 | Data | Mock fixtures + a real AI intake | Zero-latency demo, with one live subsystem |
 | AI service | **FastAPI** + **Gemini** (`ai-backend/`) | JSON-schema-constrained extraction |
@@ -272,21 +349,24 @@ motion primitives actually used are bundled.
 
 | Route | Rendering | Size | First Load JS | Purpose |
 | --- | --- | --- | --- | --- |
-| `/` | static | 4.03 kB | 169 kB | Landing, product story, trust signals |
-| `/login` | static | 5.83 kB | 127 kB | Google sign-in (simulated) |
-| `/dashboard` | static | 5.07 kB | 170 kB | Counters, category filters, triage feed, active reports |
-| `/reports` | static | 4.61 kB | 170 kB | Searchable / filterable report list |
-| `/reports/[id]` | dynamic | 11.5 kB | 173 kB | Full report detail, timeline, responder |
-| `/chat` | static | 2.19 kB | 180 kB | Full-screen AI assistant (server shell + client island) |
-| `/resources` | static | 6.18 kB | 128 kB | Shelters, supplies, contacts, guides |
+| `/` | static | 4.04 kB | 179 kB | Landing, product story, trust signals |
+| `/login` | static | 5.04 kB | 125 kB | Google sign-in (real OAuth) |
+| `/dashboard` | static | 5.08 kB | 180 kB | Counters, category filters, triage feed, active reports |
+| `/reports` | static | 4.61 kB | 180 kB | Searchable / filterable report list — **the one gated route** |
+| `/reports/[id]` | dynamic | 11.5 kB | 183 kB | Full report detail, timeline, responder |
+| `/chat` | static | 2.2 kB | 190 kB | Full-screen AI assistant (server shell + client island) |
+| `/resources` | static | 6.43 kB | 137 kB | Shelters, supplies, contacts, guides |
 | `/api/ai/chat` | dynamic | — | — | Proxy → `POST /api/chat/message` |
 | `/api/ai/tickets` | dynamic | — | — | Proxy → `POST /api/tickets` |
-| `/_not-found` | static | 873 B | 88.1 kB | 404 |
+| `/api/auth/[...nextauth]` | dynamic | — | — | OAuth handshake → Google |
+| `/_not-found` | static | 873 B | 88.2 kB | 404 |
 | `app/icon.svg` | static | — | — | Favicon |
 
 **87.3 kB** shared First Load JS across every route (React 18 + Next runtime +
-the app shell). No page ships an image, icon font, or chart library. The two
-`/api/ai/*` route handlers add nothing to it — they are server-side only.
+the app shell) — unchanged by adding auth, because `next-auth/react` is only
+pulled into the routes that use it. No page ships an image, icon font, or chart
+library. The route handlers add nothing to it — they are server-side only. The
+edge middleware is a separate 48.5 kB bundle that never reaches the client.
 
 ---
 
@@ -294,6 +374,7 @@ the app shell). No page ships an image, icon font, or chart library. The two
 
 ```
 flare/
+├── middleware.ts                 # edge gate: /reports requires a session
 ├── app/                          # App Router — routes are thin shells
 │   ├── layout.tsx                # metadata, viewport, AppShell
 │   ├── globals.css               # tokens, focus rings, a11y/print media queries
@@ -312,6 +393,7 @@ flare/
 │       ├── _shared.ts            # backendUrl(), timeout, error shape
 │       ├── chat/route.ts         # POST → /api/chat/message
 │       └── tickets/route.ts      # POST → /api/tickets
+│   └── api/auth/[...nextauth]/    # OAuth handshake (nodejs runtime)
 ├── components/
 │   ├── ui/                       # design-system primitives
 │   │   ├── button.tsx            # cva variants + sizes, asChild support
@@ -343,6 +425,8 @@ flare/
 │   ├── use-ai-chat.ts            # live intake: transcript, draft, review, submit
 │   ├── ai-client.ts              # typed client for /api/ai/*
 │   ├── ticket-intake.ts          # client mirror of ai-backend/app/slots.py
+│   ├── auth.ts                   # next-auth options — SERVER ONLY
+│   ├── session-user.ts           # session → SessionUser projection (pure)
 │   ├── time.ts                   # fixed demo clock + greeting
 │   ├── utils.ts                  # cn, relativeTime, stamps, report codes
 │   └── hooks.ts                  # media query, count-up, focus trap, localStorage
@@ -436,7 +520,7 @@ Gemini key off the client.
 
 | API | Effect |
 | --- | --- |
-| `signIn` / `signOut` | Session user; drives header CTA vs. avatar menu |
+| `user` | Derived from the OAuth session by `sessionToUser()`; drives header CTA vs. avatar menu |
 | `sendMessage(text, {viaVoice, deferReply})` | Appends the user turn, then replies from the scripted matcher. `deferReply` stops after the user turn so the live intake can supply the answer itself |
 | `appendAssistantMessage(msg)` | Adds an assistant turn and settles the typing indicator — how a model answer *and* an offline fallback get into the shared transcript |
 | `scriptedReplyFor(text)` | The scripted reply for a message, without sending it |
@@ -520,7 +604,7 @@ SOS dock / strip / footer / header
 ### Sign in
 
 ```
-/login → Continue with Google → simulated session
+/login → Continue with Google → real OAuth round trip → /dashboard
   → header swaps CTA for avatar menu
   → /dashboard greeting, personalised reporter name on new reports
 ```
@@ -661,7 +745,7 @@ else is client state. To make the rest real:
 
 | Concern | Where it goes |
 | --- | --- |
-| Auth | Replace `signIn` in `lib/store.tsx` with a real OAuth/session call; the header already branches on `user` |
+| Auth | Done — real Google OAuth, session-only, `/reports` gated. Next step is a users table so tickets can be attributed across devices |
 | Persistence | Back `REPORTS` with a database; the `Report` type in `lib/types.ts` is the schema. Tickets already persist — `createReportFromTicket` mirrors one into the report list |
 | Assistant | The live intake already runs ahead of the scripted replies. To make scripted replies the *only* fallback, delete `SCRIPTED_REPLIES` and let `scriptedReplyFor` throw |
 | Admin queue | `GET /api/tickets` and `PATCH /api/tickets/{id}/status` exist for this. There is no UI |

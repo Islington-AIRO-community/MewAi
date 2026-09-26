@@ -38,10 +38,14 @@ The README says "routes stay server components, interactive things are client
 islands." That is true for exactly one route. In reality:
 
 - **Server components:** only `app/layout.tsx` and `app/chat/page.tsx`, plus the
-  two route handlers under `app/api/ai/`.
+  route handlers under `app/api/ai/` and `app/api/auth/`.
 - **Everything else is `'use client'`** — `app/page.tsx`, `login`, `dashboard`,
   `reports`, `reports/[id]`, `resources`, all of `components/**`, `lib/store.tsx`,
-  `lib/hooks.ts`, `lib/use-ai-chat.ts`, and `lib/ai-client.ts`.
+  `lib/hooks.ts`, `lib/use-ai-chat.ts`, and `lib/ai-client.ts`. The exceptions in
+  `lib/` are `lib/auth.ts` (server-only — never import from a client component),
+  `lib/session-user.ts` (isomorphic: a pure function, no React) and
+  `lib/next-auth.d.ts` (ambient types, no runtime).
+- `middleware.ts` is neither — it runs on the edge before any route renders.
 
 Consequences an agent will trip over:
 
@@ -62,6 +66,82 @@ Consequences an agent will trip over:
 `app/chat` is the one deliberate server/client split: `page.tsx` exports
 `metadata` and wraps `chat-experience.tsx` in `<Suspense>` because the island
 calls `useSearchParams()`. Preserve that boundary if you touch either file.
+
+## Auth: Google OAuth, session only
+
+next-auth v4 (`next-auth@4.24.15`). **Not** Auth.js v5 — the `next` dist-tag
+(4.0.0-next.26) targets Next 15, and this is Next 14.2.35.
+
+```
+browser ──► /login ──► /api/auth/signin/google ──► Google consent screen
+                     ◄── /api/auth/callback/google ──► session cookie (httpOnly)
+```
+
+- `lib/auth.ts` is the `authOptions` and is **server-only**. Do not import it
+  from a client component. The client uses `next-auth/react` and the `user` the
+  store derives from it.
+- `app/api/auth/[...nextauth]/route.ts` is the handshake, `runtime = 'nodejs'`
+  because v4 signs JWTs with Node crypto. It cannot run on the edge.
+- `lib/session-user.ts` holds `sessionToUser()`, the projection of a session
+  onto `SessionUser`. It is a pure function in its own module **on purpose** —
+  in `lib/store.tsx` it would be welded to React and untestable without a
+  bundler.
+
+Three things an agent will get wrong here:
+
+1. **`SessionProvider` must be outside `AppProvider`.** `useSession` *throws*
+   rather than degrading when it has no provider (see `next-auth/react`'s
+   `SessionContext` check), and `AppProvider` calls it — so an `AppProvider`
+   rendered without one takes down every route at once. They are nested in
+   `components/layout/app-shell.tsx`.
+2. **The store has no `signIn`/`signOut`.** `user` is *derived* from the session
+   by `sessionToUser`. The old setters let the client write `user` directly,
+   which is a second, forgeable source of truth next to the real one. Sign-in
+   and sign-out are `signIn`/`signOut` from `next-auth/react` at the call sites.
+3. **Only `/reports` is gated, and that is a product decision, not an
+   oversight.** `middleware.ts` matches `/reports/:path*` and nothing else.
+   `/`, `/dashboard`, `/chat`, `/resources` and the whole SOS flow stay open,
+   because putting a Google round-trip in front of someone asking for help
+   during a disaster is a real harm — outages are exactly when this app matters,
+   and the person may have no Google account or no route to Google's servers.
+   Widening the matcher is the change to think hard about, not make casually.
+
+### The gate is a redirect, not authorization
+
+Nothing is being secured. The reports behind `/reports` are mock data in
+`useState`; there is no user-scoped data to protect, and the store still resets
+on refresh even while signed in — so signing in implies a persistence this app
+cannot yet deliver. The gate becomes a real access control when the deferred
+`users` table lands. Until then, do not describe it as securing anything.
+
+### Three properties that are easy to break
+
+- **`middleware.ts` must not import `lib/auth.ts`.** Middleware runs on the edge
+  and `authOptions` pulls in the Google provider and Node crypto. Read
+  `process.env.NEXTAUTH_SECRET` directly instead.
+- **`callbackUrl` is validated by parsing, not by prefix.** A `startsWith('/')`
+  check is not enough: the URL parser treats `\` as `/` for special schemes and
+  strips tabs and newlines, so `?callbackUrl=/\evil.example` resolves to another
+  host. `app/login/page.tsx` resolves the URL and compares `origin`. Do not
+  "simplify" it back to a regex.
+- **Gating does not make a route dynamic.** `/reports` is still statically
+  prerendered, because the check happens in middleware before the route renders.
+  The cost is that its HTML has no session, so a signed-in visitor sees the
+  "Sign in" button swap to the account menu once the cookie is read. Rendering
+  nothing during loading was tried and is worse — the prerendered HTML always
+  contains the button, so it blinks on *every* load for signed-out users too.
+
+### Consequences of choosing JWT sessions
+
+`session: { strategy: 'jwt' }`, so there is no database and no users table —
+that was deferred along with the admin queue, because the access model belongs
+to that work. Two things follow:
+
+- Sign-out clears the cookie (`Max-Age=0`), which ends the session in the
+  browser. A token captured beforehand stays valid until it expires. That is
+  the trade-off for having no server-side session store; keep `maxAge` short.
+- Adding a users table later means an adapter and a schema change, not a
+  rewrite of `lib/auth.ts`.
 
 ## The AI intake
 
@@ -285,15 +365,21 @@ There is no a11y test, so these break silently:
 
 There are two env files, both gitignored, both read server-side only.
 
-**Root `.env`** — one variable, read by the proxy handlers:
+**Root `.env`** — read by the proxy handlers and by the auth config:
 
 ```
 AI_API_URL=http://127.0.0.1:8000
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+NEXTAUTH_SECRET=
+NEXTAUTH_URL=http://localhost:3000
 ```
 
-Read via `process.env` in `app/api/ai/_shared.ts`. It is **not** a
-`NEXT_PUBLIC_` var and must not become one; the whole point of the proxy is that
-the browser never learns the backend's address or key.
+`AI_API_URL` is read via `process.env` in `app/api/ai/_shared.ts`; the OAuth
+vars are read in `lib/auth.ts` and `middleware.ts`. None of them is a
+`NEXT_PUBLIC_` var and none must become one — the whole point of the proxy is
+that the browser never learns the backend's address or key, and the whole point
+of the server-side OAuth handler is that it never learns the client secret.
 
 **`ai-backend/.env`** — `GEMINI_API_KEY`, `DATABASE_URL`, `GEMINI_MODELS`,
 timeouts, `CORS_ORIGINS`. Read by `pydantic-settings` in `ai-backend/app/config.py`.
