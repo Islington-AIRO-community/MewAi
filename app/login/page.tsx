@@ -2,15 +2,14 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { signIn, useSession } from 'next-auth/react';
 import {
   ArrowRight,
   Brain,
   CheckCircle2,
   Eye,
   Fingerprint,
-  LogIn,
-  Mail,
   PhoneCall,
   ShieldCheck,
   Sparkles,
@@ -19,11 +18,8 @@ import {
 import { Logo } from '@/components/layout/logo';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Separator } from '@/components/ui/primitives';
 import { EmergencyStatusBadge } from '@/components/emergency/emergency-status-badge';
-import { useApp, type SessionUser } from '@/lib/store';
 import { SYSTEM_STATUS } from '@/lib/types';
-import { cn } from '@/lib/utils';
 
 /** Inline Google "G" mark — no external image request. */
 function GoogleMark({ className }: { className?: string }) {
@@ -55,61 +51,67 @@ const TRUST = [
   { icon: Eye, label: 'Location shared only when you send a request' },
 ];
 
+/** Signed-out visitors land on the dashboard unless turned away from a page. */
+const DEFAULT_DESTINATION = '/dashboard';
+
 export default function LoginPage() {
   const router = useRouter();
-  const { user, signIn } = useApp();
-  const [pending, setPending] = React.useState<'google' | 'email' | null>(null);
-  const [email, setEmail] = React.useState('');
-  const [error, setError] = React.useState<string | null>(null);
+  const { status } = useSession();
+  const [pending, setPending] = React.useState(false);
+  const [destination, setDestination] = React.useState(DEFAULT_DESTINATION);
 
-  const redirect = React.useCallback(() => {
-    router.push('/dashboard');
-    router.refresh();
-  }, [router]);
+  /**
+   * Where to send the user once Google comes back.
+   *
+   * Read from `window.location` in a mount effect rather than with
+   * `useSearchParams()`. `useSearchParams` would force this route behind a
+   * Suspense boundary — the same split `/chat` uses for its `?intent=` deep
+   * links — and a login page is the worst place to flash a skeleton when it is
+   * already showing a spinner on the button. This runs once after mount, which
+   * is before anyone can click.
+   *
+   * `middleware.ts` sends unauthenticated visitors here with
+   * `?callbackUrl=/reports`, so signing in returns them to the page they asked
+   * for rather than dumping them on the dashboard.
+   */
+  React.useEffect(() => {
+    const requested = new URLSearchParams(window.location.search).get('callbackUrl');
+    if (!requested) return;
+    // Same-origin only, decided by *parsing* rather than by matching a prefix.
+    //
+    // A `startsWith('/')` check looks sufficient and is not. The URL parser
+    // treats a backslash as a slash for special schemes and strips tab/newline,
+    // so `?callbackUrl=/\evil.example` and `?callbackUrl=/<tab>/evil.example`
+    // both pass a naive slash test and still resolve to another host — an open
+    // redirect through the OAuth return trip. Resolving first and comparing
+    // origins catches every variant at once, including `//host` and
+    // `javascript:`.
+    try {
+      const target = new URL(requested, window.location.origin);
+      if (target.origin !== window.location.origin) return;
+      setDestination(target.pathname + target.search + target.hash);
+    } catch {
+      // Unparseable input: keep the default destination rather than guessing.
+    }
+  }, []);
 
   const handleGoogle = React.useCallback(() => {
-    setPending('google');
-    setError(null);
-    // Mock OAuth handshake: redirect to the consent screen, then back.
-    window.setTimeout(() => {
-      signIn({
-        name: 'Amara Okafor',
-        email: 'amara.okafor@example.org',
-        avatarHref: null,
-        initials: 'AO',
-        verified: true,
-      });
-      redirect();
-    }, 1100);
-  }, [signIn, redirect]);
+    setPending(true);
+    // Real OAuth: this navigates the whole page to Google's consent screen and
+    // back. There is no in-page state to unwind — `pending` only disables the
+    // button and shows the spinner across the hand-off.
+    void signIn('google', { callbackUrl: destination });
+  }, [destination]);
 
-  const handleEmail = React.useCallback(
-    (e: React.FormEvent) => {
-      e.preventDefault();
-      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
-        setError('Enter a valid email address to continue.');
-        return;
-      }
-      setPending('email');
-      setError(null);
-      window.setTimeout(() => {
-        signIn({
-          name: email.split('@')[0].replace(/[._-]/g, ' '),
-          email,
-          avatarHref: null,
-          initials: '',
-          verified: false,
-        } satisfies SessionUser);
-        redirect();
-      }, 800);
-    },
-    [email, signIn, redirect],
-  );
-
-  // Already signed in? Skip the form.
+  // Already signed in? Skip the form. Keyed on `authenticated` rather than
+  // `status !== 'loading'` so the bounce cannot fire before the session has
+  // actually resolved, and cannot fire at all for a signed-out visitor.
   React.useEffect(() => {
-    if (user) redirect();
-  }, [user, redirect]);
+    if (status === 'authenticated') {
+      router.replace(destination);
+      router.refresh();
+    }
+  }, [status, destination, router]);
 
   return (
     <div className="relative min-h-[calc(100dvh-4.25rem)] overflow-hidden bg-navy-950">
@@ -201,8 +203,8 @@ export default function LoginPage() {
 
               <Button
                 onClick={handleGoogle}
-                loading={pending === 'google'}
-                disabled={pending !== null && pending !== 'google'}
+                loading={pending}
+                disabled={pending || status === 'authenticated'}
                 size="xl"
                 block
                 className="mt-6 border-navy-200 bg-white text-navy-800 hover:border-navy-300 hover:bg-navy-50"
@@ -212,75 +214,10 @@ export default function LoginPage() {
                 Continue with Google
               </Button>
 
-              <div className="my-5 flex items-center gap-3">
-                <Separator className="flex-1" />
-                <span className="text-2xs font-bold uppercase tracking-[0.1em] text-navy-400">
-                  or use email
-                </span>
-                <Separator className="flex-1" />
-              </div>
-
-              <form onSubmit={handleEmail} noValidate>
-                <label
-                  htmlFor="email"
-                  className="block text-2xs font-bold uppercase tracking-[0.08em] text-navy-400"
-                >
-                  Email address
-                </label>
-                <div className="relative mt-1.5">
-                  <Mail
-                    className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-navy-400"
-                    aria-hidden="true"
-                  />
-                  <input
-                    id="email"
-                    type="email"
-                    autoComplete="email"
-                    inputMode="email"
-                    value={email}
-                    onChange={(e) => {
-                      setEmail(e.target.value);
-                      setError(null);
-                    }}
-                    aria-invalid={error ? true : undefined}
-                    aria-describedby={error ? 'email-error' : 'email-hint'}
-                    placeholder="you@example.org"
-                    className={cn(
-                      'h-12 w-full rounded-xl border bg-white pl-10 pr-4 text-[15px] text-navy-800',
-                      'placeholder:text-navy-400',
-                      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dispatch-600 focus-visible:ring-offset-1',
-                      error ? 'border-emergency-400 ring-emergency-200' : 'border-navy-200',
-                    )}
-                  />
-                </div>
-
-                {error ? (
-                  <p
-                    id="email-error"
-                    role="alert"
-                    className="mt-2 text-sm font-semibold text-emergency-700"
-                  >
-                    {error}
-                  </p>
-                ) : (
-                  <p id="email-hint" className="mt-2 text-xs text-navy-400">
-                    We will send a one-time link. No password required.
-                  </p>
-                )}
-
-                <Button
-                  type="submit"
-                  variant="primary"
-                  size="xl"
-                  block
-                  loading={pending === 'email'}
-                  disabled={pending !== null && pending !== 'email'}
-                  className="mt-4"
-                >
-                  <LogIn aria-hidden="true" />
-                  Email me a sign-in link
-                </Button>
-              </form>
+              <p className="mt-3.5 text-center text-xs leading-relaxed text-navy-400">
+                Google verifies your email. FLARE never sees your password, and does not share
+                your identity with response teams.
+              </p>
             </div>
 
             {/* Emergency escape hatch */}

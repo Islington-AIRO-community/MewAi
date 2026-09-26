@@ -1,6 +1,8 @@
 'use client';
 
 import * as React from 'react';
+import { useSession } from 'next-auth/react';
+import { sessionToUser, type SessionUser } from '@/lib/session-user';
 import {
   DEFAULT_REPLY,
   INITIAL_ACTION_CARDS,
@@ -17,13 +19,7 @@ import { reportCodeFromId } from '@/lib/utils';
  * Session
  * ------------------------------------------------------------------ */
 
-export interface SessionUser {
-  name: string;
-  email: string;
-  avatarHref: string | null;
-  initials: string;
-  verified: boolean;
-}
+export type { SessionUser } from '@/lib/session-user';
 
 interface AppState {
   user: SessionUser | null;
@@ -35,8 +31,6 @@ interface AppState {
 }
 
 interface AppContextValue extends AppState {
-  signIn: (user: SessionUser) => void;
-  signOut: () => void;
   sendMessage: (
     text: string,
     opts?: { viaVoice?: boolean; deferReply?: boolean },
@@ -85,8 +79,19 @@ const AVATAR_SVG = (hue: number) =>
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" fill="hsl(${hue},42%,32%)"/><circle cx="32" cy="25" r="11" fill="hsl(${hue},60%,82%)"/><path d="M10 62c2-13 11-19 22-19s20 6 22 19z" fill="hsl(${hue},60%,82%)"/></svg>`,
   )}`;
 
+/**
+ * The single source of truth for session, reports, transcript and action cards.
+ *
+ * MUST be mounted inside a `<SessionProvider>`: `useSession` throws rather than
+ * degrading if it is not, so an `AppProvider` rendered without one takes the
+ * whole app down rather than one component. `SessionProvider` is therefore an
+ * *outer* wrapper here — see `components/layout/app-shell.tsx`, which nests it
+ * above this provider deliberately. If you move these providers, keep
+ * `SessionProvider` on the outside.
+ */
 export function AppProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = React.useState<SessionUser | null>(null);
+  const { data: session, status } = useSession();
+  const user = React.useMemo(() => sessionToUser(session, status), [session, status]);
   const [reports, setReports] = React.useState<Report[]>(REPORTS);
   const [messages, setMessages] = React.useState<ChatMessage[]>(INITIAL_MESSAGES);
   const [actionCards, setActionCards] = React.useState<ActionCard[]>(INITIAL_ACTION_CARDS);
@@ -100,9 +105,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const nowIso = React.useCallback(() => new Date().toISOString(), []);
-
-  const signIn = React.useCallback((next: SessionUser) => setUser(next), []);
-  const signOut = React.useCallback(() => setUser(null), []);
 
   const getReport = React.useCallback(
     (id: string) => reports.find((r) => r.id === id),
@@ -503,8 +505,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       messages,
       actionCards,
       nextReportSeq,
-      signIn,
-      signOut,
       sendMessage,
       isResponding,
       appendAssistantMessage,
@@ -522,8 +522,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       messages,
       actionCards,
       nextReportSeq,
-      signIn,
-      signOut,
       sendMessage,
       isResponding,
       appendAssistantMessage,

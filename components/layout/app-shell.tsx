@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils';
 import { useApp } from '@/lib/store';
 import { AppProvider } from '@/lib/store';
 import { useAiChat } from '@/lib/use-ai-chat';
+import { SessionProvider } from 'next-auth/react';
 import { ToastProvider, useToast } from '@/components/ui/toast';
 import { SiteHeader } from './site-header';
 import { SosFloatingBar } from '@/components/emergency/sos-floating-bar';
@@ -28,11 +29,17 @@ const MOBILE_NAV = [
  */
 export function AppShell({ children }: { children: React.ReactNode }) {
   return (
-    <AppProvider>
-      <ToastProvider>
-        <Shell>{children}</Shell>
-      </ToastProvider>
-    </AppProvider>
+    // Order is load-bearing. `useSession` throws if it is not inside a
+    // SessionProvider, and AppProvider calls it to derive the session user, so
+    // SessionProvider has to stay on the *outside*. Swapping these two takes
+    // down every route at once rather than degrading one component.
+    <SessionProvider>
+      <AppProvider>
+        <ToastProvider>
+          <Shell>{children}</Shell>
+        </ToastProvider>
+      </AppProvider>
+    </SessionProvider>
   );
 }
 
