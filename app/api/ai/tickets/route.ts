@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import type { SupportType } from '@/lib/types';
+import { sessionEmail } from '../_session';
 import {
   AI_TIMEOUT_MS,
   backendUnreachable,
@@ -14,6 +15,11 @@ import {
  * verbatim: its 422 names the exact missing attributes, and the review form
  * highlights those fields, so a second validation layer here would only risk
  * disagreeing with the authoritative one.
+ *
+ * `GET` is the other half — the signed-in reporter's own tickets. See
+ * `app/api/ai/tickets/[id]/route.ts` for how ownership is enforced; the short
+ * version is that it is enforced here and nowhere else, because the AI backend
+ * has no authentication of any kind.
  */
 
 export const dynamic = 'force-dynamic';
@@ -84,8 +90,49 @@ function validate(body: unknown): Validation {
       notes: text(b.notes, 2000),
       source: 'ai-chat',
       session_id: text(b.session_id, 64) || 'anonymous',
+      // Deliberately not read from the body. `validate` drops it, and the value
+      // below is the only one that reaches the backend — see `POST` for why
+      // that matters.
+      owner_email: null,
     },
   };
+}
+
+/**
+ * The reporter's own tickets.
+ *
+ * Requires a session, and resolves the address from the httpOnly cookie. The
+ * address is passed to the backend in a header it trusts, because the backend
+ * cannot verify it and does not try to.
+ */
+export async function GET() {
+  const email = await sessionEmail();
+  if (!email) {
+    return NextResponse.json(
+      { error: 'Sign in to see your tickets.', code: 'not_signed_in' },
+      { status: 401 },
+    );
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), AI_TIMEOUT_MS);
+
+  try {
+    const upstream = await fetch(`${backendUrl()}/api/tickets/mine`, {
+      method: 'GET',
+      headers: { 'x-ticket-owner': email },
+      signal: controller.signal,
+    });
+    const body = await upstream.text();
+    return new NextResponse(body, {
+      status: upstream.status,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  } catch (error) {
+    return backendUnreachable(error);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function POST(request: Request) {
@@ -98,6 +145,21 @@ export async function POST(request: Request) {
 
   const result = validate(body);
   if (!result.ok) return badRequest(result.error);
+
+  // The one place `owner_email` is decided.
+  //
+  // A ticket is bound to an account only if the person filing it already had a
+  // session, and the value comes from the session cookie rather than the
+  // request — the cookie is httpOnly, so the browser cannot read it and cannot
+  // put someone else's address in a body field. That is what makes this
+  // trustworthy where a body value would be forgeable: the POST proxy *is*
+  // browser-reachable, and without this line a caller could stamp any address
+  // onto any ticket and then read it back through `GET /api/ai/tickets`.
+  //
+  // A signed-out reporter gets `null`, which is a supported outcome, not an
+  // error. Their ticket is real and will be worked; it just has no portal.
+  const email = await sessionEmail();
+  result.payload.owner_email = email;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), AI_TIMEOUT_MS);

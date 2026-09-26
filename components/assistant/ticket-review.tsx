@@ -1,6 +1,7 @@
 'use client';
 
 import * as React from 'react';
+import Link from 'next/link';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
   AlertCircle,
@@ -37,6 +38,7 @@ import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import type { AiChatApi } from '@/lib/use-ai-chat';
+import { ticketStatusLabel } from './ticket-status';
 
 /**
  * Ticket review and submit.
@@ -585,7 +587,7 @@ function TicketReceipt({ state, className }: { state: AiChatApi; className?: str
               timeStyle: 'short',
             })}
           />
-          <ReceiptRow label="Status" value="Waiting for review" />
+          <ReceiptRow label="Status" value={ticketStatusLabel(ticket.status)} />
           <ReceiptRow
             label="Support"
             value={ticket.support_needed
@@ -598,15 +600,41 @@ function TicketReceipt({ state, className }: { state: AiChatApi; className?: str
 
         <p className="mt-3 flex items-start gap-1.5 text-2xs leading-relaxed text-navy-500">
           <Info className="mt-px size-3.5 shrink-0" aria-hidden="true" />
-          <span>
-            Keep this reference. An admin reviewing the queue will use it to look the ticket up.
-          </span>
+          {ticket.owner_email ? (
+            <span>
+              Keep this reference. You can follow this ticket from{' '}
+              <Link
+                href="/tickets"
+                className="font-semibold text-navy-700 underline underline-offset-2"
+              >
+                your tickets
+              </Link>{' '}
+              to check its status or add a message.
+            </span>
+          ) : (
+            // Signed out at intake, so there is nothing to look the ticket up
+            // by later. Saying so plainly is the point: a dead link here would
+            // send someone looking for a page that can never find their ticket.
+            <span>
+              Keep this reference. You filed this without signing in, so it cannot be
+              reopened from an account — quote it to any response team that contacts you.
+            </span>
+          )}
         </p>
       </div>
 
       <footer className="safe-bottom border-t border-navy-100 bg-navy-50/70 px-4 py-3">
         <div className="flex items-center gap-2.5">
-          <Button variant="primary" size="md" onClick={state.reset} className="flex-1">
+          {/* `startNewCase`, not `reset`: this is a different emergency, so the
+              model's context is cut. The visible transcript stays — the reporter
+              should not lose what they already told us — but without this the
+              second ticket inherits the first one's name, phone and urgency. */}
+          <Button
+            variant="primary"
+            size="md"
+            onClick={state.startNewCase}
+            className="flex-1"
+          >
             <Pencil aria-hidden="true" />
             Report something else
           </Button>

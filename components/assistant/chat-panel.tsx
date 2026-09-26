@@ -10,6 +10,7 @@ import {
   Loader2,
   Mic,
   MicOff,
+  PencilLine,
   Search,
   ShieldCheck,
   Sparkles,
@@ -409,9 +410,17 @@ export function ChatPanel({
       {/* Composer */}
       {/* Still collecting. The list names what is outstanding, so the user knows
           the conversation has a destination. */}
-      {ai && !reviewing && ai.missing.length > 0 && ai.asking.length === 0 && (
+      {ai && !reviewing && ai.missing.length > 0 && (
         <div className="shrink-0 border-t border-navy-100 bg-white px-3 py-2 sm:px-4">
-          <IntakeChecklist state={ai} />
+          {ai.asking.length === 0 && <IntakeChecklist state={ai} />}
+          <button
+            type="button"
+            onClick={ai.openReview}
+            className="mt-1 flex w-full items-center justify-center gap-1.5 rounded-lg py-1 text-2xs font-semibold text-navy-500 underline underline-offset-2 transition-colors hover:text-navy-900"
+          >
+            <PencilLine className="size-3 shrink-0" aria-hidden="true" />
+            I&apos;d rather fill in the form myself
+          </button>
         </div>
       )}
 

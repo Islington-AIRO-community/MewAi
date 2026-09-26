@@ -89,6 +89,18 @@ class ChatRequest(BaseModel):
     # Set by the client once the user has edited a draft and asked to continue:
     # lets the model know the human is the source of truth for those values.
     edited_draft: dict[str, str] | None = None
+    # Slots the model has already confirmed, keyed by `SlotName`.
+    #
+    # This is what makes a bounded transcript safe. The client keeps only the
+    # most recent turns so the request cannot grow without limit, and everything
+    # older survives here as a structured value — which is both a smaller and a
+    # more reliable summary of turn 4 than turn 4's prose is.
+    known_facts: dict[str, str] | None = None
+    # Things the reporter did rather than said, e.g. the category tile they
+    # arrived through. Rendered as context, never as an utterance: the reporter
+    # did not type these, and presenting them as something they said would be a
+    # fabrication the model then reasons from.
+    context: list[str] | None = Field(default=None, max_length=8)
 
 
 class TicketDraft(BaseModel):
@@ -167,6 +179,7 @@ class TicketCreate(BaseModel):
     notes: str = Field(default="", max_length=2000)
     source: str = Field(default="ai-chat", max_length=32)
     session_id: str | None = Field(default=None, max_length=64)
+    owner_email: str | None = Field(default=None, max_length=254)
 
     @field_validator("people_affected", mode="before")
     @classmethod
@@ -194,6 +207,20 @@ class TicketCreate(BaseModel):
         return errors
 
 
+class TicketClaim(BaseModel):
+    """
+    Proof that the caller is the person who filed an orphaned ticket.
+
+    `reporter_phone` is the second factor, and it is not a guess the caller has
+    to invent: it is the number they already typed into the ticket. Knowing the
+    reference alone is not enough, and the reference alone is guessable, because
+    the ids are sequential.
+    """
+
+    ticket_id: str = Field(min_length=1, max_length=32)
+    reporter_phone: str = Field(min_length=6, max_length=40)
+
+
 class Ticket(BaseModel):
     """A stored ticket, as returned by the API."""
 
@@ -214,6 +241,7 @@ class Ticket(BaseModel):
     notes: str
     source: str
     session_id: str | None
+    owner_email: str | None
 
 
 class TicketListResponse(BaseModel):
@@ -221,3 +249,57 @@ class TicketListResponse(BaseModel):
 
     total: int
     tickets: list[Ticket]
+
+
+# ---------------------------------------------------------------------- #
+# Follow-up conversation
+# ---------------------------------------------------------------------- #
+
+
+class TicketMessage(BaseModel):
+    """One turn of the conversation attached to a ticket."""
+
+    id: int
+    ticket_id: str
+    role: str
+    text: str
+    created_at: datetime
+
+
+class TicketConversation(BaseModel):
+    """
+    A ticket together with its follow-up history.
+
+    One call rather than two, because the portal needs both and the reporter
+    should not have to wait on two round trips to render a page they may be
+    reading on a phone with one bar of signal.
+    """
+
+    ticket: Ticket
+    messages: list[TicketMessage]
+
+
+class FollowUpRequest(BaseModel):
+    """A reporter's follow-up question about a ticket they already filed."""
+
+    message: str = Field(min_length=1, max_length=2000)
+
+
+class FollowUpResponse(BaseModel):
+    """
+    The assistant's answer about a known ticket.
+
+    `status` is echoed from the row rather than asked of the model, and so is
+    every fact in `ticket`. The model is given the ticket as context and asked
+    what it means; it is never asked to decide any of it. A response that
+    invents "a crew is on the way" when the row says `submitted` is the single
+    worst output this service could produce.
+    """
+
+    reply: str
+    status: TicketStatus
+    status_detail: str
+    ticket: Ticket
+    degraded: bool
+    model: str
+    safety_note: str = ""

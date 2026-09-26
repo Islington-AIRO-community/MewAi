@@ -13,3 +13,8 @@ asyncpg==0.30.0
 # it runs in milliseconds and never spends Gemini quota.
 -r requirements.txt
 pytest==8.3.4
+# The follow-up service is `async def` all the way down, and without a plugin
+# pytest *silently skips* those tests rather than failing them — the suite would
+# report green while the assertions never ran. `asyncio_mode = auto` below is
+# what makes a bare `async def test_` execute.
+pytest-asyncio==0.25.2

@@ -7,7 +7,7 @@ import { ReliefAssistant } from '@/components/assistant/relief-assistant';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { useAiChat } from '@/lib/use-ai-chat';
+import { useAiChatInstance } from '@/lib/ai-chat-context';
 import { CATEGORIES } from '@/lib/types';
 
 const QUICK_PHRASES = [
@@ -23,22 +23,22 @@ const QUICK_PHRASES = [
 export function ChatExperience() {
   const searchParams = useSearchParams();
   const intent = searchParams?.get('intent');
-  // One intake for this page: the assistant panel, the quick phrases and the
-  // `?intent=` deep link all drive it, so a phrase tapped in the side rail
-  // advances the same ticket draft the composer does.
-  const ai = useAiChat();
+  // The conversation's one intake, shared with the floating launcher mounted in
+  // `AppShell`. A phrase tapped here and one tapped in the floating assistant
+  // build the same ticket draft, because they are the same conversation.
+  const ai = useAiChatInstance();
   const [seeded, setSeeded] = React.useState(false);
 
-  // Deep link: /chat?intent=medical opens the conversation with that need.
+  // Deep link: /chat?intent=medical records that the reporter came through the
+  // medical tile. This used to call `ai.send()` with an invented first-person
+  // sentence, which both displayed as something they had said and sent to Gemini
+  // as something they had said.
   React.useEffect(() => {
     if (seeded || !intent) return;
     const cat = CATEGORIES[intent as keyof typeof CATEGORIES];
     if (!cat) return;
     setSeeded(true);
-    const t = window.setTimeout(() => {
-      void ai.send(`I need help with ${cat.label.toLowerCase()}. ${cat.description}.`);
-    }, 400);
-    return () => window.clearTimeout(t);
+    ai.noteIntent(`You arrived here through the "${cat.label}" category.`);
   }, [intent, seeded, ai]);
 
   return (

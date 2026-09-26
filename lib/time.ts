@@ -18,3 +18,21 @@ export function greetingFor(now: Date = DEMO_NOW): string {
   if (h < 18) return 'Good afternoon';
   return 'Good evening';
 }
+
+/**
+ * Format a **server-stamped** timestamp for display.
+ *
+ * Only for values the database produced — `relief_tickets.created_at`, a ticket
+ * message. Those are safe to read with `new Date()` because they do not exist
+ * until a client-side fetch resolves, so they are never part of a first paint
+ * and can never disagree with the prerendered HTML.
+ *
+ * This is not a general-purpose formatter and must not be pointed at a
+ * `DEMO_NOW`-relative value; see the note at the top of this file for why that
+ * distinction is load-bearing rather than stylistic.
+ */
+export function formatDateTime(iso: string): string {
+  const parsed = new Date(iso);
+  if (Number.isNaN(parsed.getTime())) return '';
+  return parsed.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
+}
