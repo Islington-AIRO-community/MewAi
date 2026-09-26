@@ -250,7 +250,7 @@ export function ChatPanel({
   return (
     <div className={cn('flex min-h-0 flex-1 flex-col', className)}>
       {/* Search */}
-      {showSearch && (
+      {showSearch && messages.length > 0 && (
         <div className="shrink-0 border-b border-navy-100 bg-white/80 px-3 py-2.5 backdrop-blur sm:px-4">
           <AnimatePresence initial={false} mode="wait">
             {searchOpen ? (
@@ -358,6 +358,35 @@ export function ChatPanel({
               review step when it is ready.
             </span>
           </p>
+        )}
+
+        {/* Empty state. The transcript starts empty on purpose, so this is the
+            first thing a visitor sees and it has to do the job the old seed
+            was doing: say what to do next. It states only what the app will
+            actually do — ask for what is missing, then read it back before
+            anything is sent. No example conversation, no captured fields, and
+            no department, because a reporter must not be able to mistake any of
+            that for something that already happened. */}
+        {messages.length === 0 && !reviewing && (
+          <div className="flex min-h-full flex-col items-center justify-center px-2 py-10 text-center">
+            <span
+              className="grid size-11 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-dispatch-500 to-dispatch-700 text-white shadow-soft"
+              aria-hidden="true"
+            >
+              <Sparkles className="size-5" />
+            </span>
+            <p className="mt-3.5 text-sm font-bold tracking-tight text-navy-900">
+              Describe what is happening
+            </p>
+            <p className="mt-1.5 max-w-[30ch] text-xs leading-relaxed text-navy-500">
+              In your own words, by voice or text. I will ask for whatever I
+              still need, then read it back before anything is sent.
+            </p>
+            <p className="mt-4 flex items-center gap-1.5 text-2xs font-semibold text-relief-700">
+              <ShieldCheck className="size-3.5 shrink-0" aria-hidden="true" />
+              Nothing is dispatched without your confirmation
+            </p>
+          </div>
         )}
 
         <ul ref={listRef} className="space-y-3.5">
