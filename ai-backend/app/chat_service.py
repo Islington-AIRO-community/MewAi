@@ -98,11 +98,17 @@ class ChatService:
     async def respond(self, request: ChatRequest) -> ChatResponse:
         transcript = [(m.role, m.text) for m in request.messages]
         merged_edits = _clean_edits(request.edited_draft)
+        confirmed = _clean_facts(request.known_facts)
 
         try:
             payload, model = await self._gemini.generate_json(
                 system_instruction=SYSTEM_INSTRUCTION,
-                user_text=build_user_text(transcript, merged_edits),
+                user_text=build_user_text(
+                    transcript,
+                    merged_edits,
+                    confirmed,
+                    request.context,
+                ),
                 response_schema=build_response_schema(),
             )
         except GeminiError as exc:
@@ -307,6 +313,25 @@ def _clean_edits(edits: dict[str, str] | None) -> dict[str, str] | None:
     if not edits:
         return None
     cleaned = {k: str(v).strip() for k, v in edits.items() if str(v).strip()}
+    return cleaned or None
+
+
+def _clean_facts(facts: dict[str, str] | None) -> dict[str, str] | None:
+    """
+    Trim the confirmed-facts block the client sends alongside a bounded window.
+
+    Only real `SlotName` keys survive. The value is interpolated into the model
+    prompt, so an arbitrary caller-supplied key is both noise and a small
+    prompt-injection surface — this block is context, not instruction.
+    """
+    if not facts:
+        return None
+    known = {s.value for s in SlotName}
+    cleaned = {
+        k: str(v).strip()
+        for k, v in facts.items()
+        if k in known and str(v).strip()
+    }
     return cleaned or None
 
 

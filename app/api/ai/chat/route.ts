@@ -26,7 +26,14 @@ const ROLES = new Set(['user', 'assistant']);
 
 /** Discriminated on `ok` so the failure path narrows to a real string. */
 type Validation =
-  | { ok: true; messages: ProxyMessage[]; sessionId: string; editedDraft?: Record<string, string> }
+  | {
+      ok: true;
+      messages: ProxyMessage[];
+      sessionId: string;
+      editedDraft?: Record<string, string>;
+      knownFacts?: Record<string, string>;
+      context?: string[];
+    }
   | { ok: false; error: string };
 
 function validate(body: unknown): Validation {
@@ -77,7 +84,33 @@ function validate(body: unknown): Validation {
     if (Object.keys(editedDraft).length === 0) editedDraft = undefined;
   }
 
-  return { ok: true, messages, sessionId, editedDraft };
+  // Confirmed facts the model has already established. Coerced to strings for
+  // the same reason as `editedDraft`: these are interpolated into the prompt.
+  // This is what lets the client keep a bounded transcript window without
+  // losing facts stated many turns ago.
+  let knownFacts: Record<string, string> | undefined;
+  if (typeof record.knownFacts === 'object' && record.knownFacts !== null) {
+    knownFacts = {};
+    for (const [key, value] of Object.entries(record.knownFacts)) {
+      if (typeof value === 'string' && value.trim()) {
+        knownFacts[key.slice(0, 40)] = value.slice(0, 2000);
+      }
+    }
+    if (Object.keys(knownFacts).length === 0) knownFacts = undefined;
+  }
+
+  // How the reporter arrived. Not an utterance — these are things they did, such
+  // as tapping a category tile, and are rendered to the model as context.
+  let context: string[] | undefined;
+  if (Array.isArray(record.context)) {
+    const lines = record.context
+      .filter((line): line is string => typeof line === 'string' && line.trim().length > 0)
+      .slice(0, 8)
+      .map((line) => line.slice(0, 300));
+    if (lines.length) context = lines;
+  }
+
+  return { ok: true, messages, sessionId, editedDraft, knownFacts, context };
 }
 
 export async function POST(request: Request) {
@@ -102,6 +135,8 @@ export async function POST(request: Request) {
         messages: parsed.messages,
         session_id: parsed.sessionId,
         edited_draft: parsed.editedDraft,
+        known_facts: parsed.knownFacts,
+        context: parsed.context,
       }),
       signal: controller.signal,
     });

@@ -625,7 +625,16 @@ function TicketReceipt({ state, className }: { state: AiChatApi; className?: str
 
       <footer className="safe-bottom border-t border-navy-100 bg-navy-50/70 px-4 py-3">
         <div className="flex items-center gap-2.5">
-          <Button variant="primary" size="md" onClick={state.reset} className="flex-1">
+          {/* `startNewCase`, not `reset`: this is a different emergency, so the
+              model's context is cut. The visible transcript stays — the reporter
+              should not lose what they already told us — but without this the
+              second ticket inherits the first one's name, phone and urgency. */}
+          <Button
+            variant="primary"
+            size="md"
+            onClick={state.startNewCase}
+            className="flex-1"
+          >
             <Pencil aria-hidden="true" />
             Report something else
           </Button>

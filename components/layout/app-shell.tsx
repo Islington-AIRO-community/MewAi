@@ -7,7 +7,7 @@ import { FileText, LayoutDashboard, LifeBuoy, MessageSquareText } from 'lucide-r
 import { cn } from '@/lib/utils';
 import { useApp } from '@/lib/store';
 import { AppProvider } from '@/lib/store';
-import { useAiChat } from '@/lib/use-ai-chat';
+import { AiChatProvider, useAiChatInstance } from '@/lib/ai-chat-context';
 import { SessionProvider } from 'next-auth/react';
 import { ToastProvider, useToast } from '@/components/ui/toast';
 import { SiteHeader } from './site-header';
@@ -33,10 +33,19 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     // SessionProvider, and AppProvider calls it to derive the session user, so
     // SessionProvider has to stay on the *outside*. Swapping these two takes
     // down every route at once rather than degrading one component.
+    //
+    // `AiChatProvider` is inside `AppProvider` for the same reason, and it
+    // wraps every route so the intake survives navigation. It has to be a single
+    // instance for the whole tree: the floating launcher on `/dashboard` and the
+    // full-page assistant on `/chat` are the same conversation, and two
+    // instances would mean two drafts, two session ids and two divergent
+    // transcripts for one reporter.
     <SessionProvider>
       <AppProvider>
         <ToastProvider>
-          <Shell>{children}</Shell>
+          <AiChatProvider>
+            <Shell>{children}</Shell>
+          </AiChatProvider>
         </ToastProvider>
       </AppProvider>
     </SessionProvider>
@@ -49,10 +58,11 @@ function Shell({ children }: { children: React.ReactNode }) {
   const { toast } = useToast();
   const pathname = usePathname();
 
-  // The floating assistant's intake lives here, at the surface that owns it, so
-  // the ticket draft survives navigating between routes (state is in-memory, so
-  // a reload still resets it — see AGENTS.md).
-  const ai = useAiChat();
+  // The conversation's single intake, mounted once in `AppShell`. The floating
+  // assistant's draft therefore survives navigating between routes (state is
+  // in-memory, so a reload still resets it — see AGENTS.md) and is the *same*
+  // draft `/chat` fills in.
+  const ai = useAiChatInstance();
 
   const pendingCards = actionCards.filter((c) => c.status === 'pending').length;
   const activeCount = reports.filter((r) => r.currentStage !== 'resolved').length;

@@ -89,6 +89,18 @@ class ChatRequest(BaseModel):
     # Set by the client once the user has edited a draft and asked to continue:
     # lets the model know the human is the source of truth for those values.
     edited_draft: dict[str, str] | None = None
+    # Slots the model has already confirmed, keyed by `SlotName`.
+    #
+    # This is what makes a bounded transcript safe. The client keeps only the
+    # most recent turns so the request cannot grow without limit, and everything
+    # older survives here as a structured value — which is both a smaller and a
+    # more reliable summary of turn 4 than turn 4's prose is.
+    known_facts: dict[str, str] | None = None
+    # Things the reporter did rather than said, e.g. the category tile they
+    # arrived through. Rendered as context, never as an utterance: the reporter
+    # did not type these, and presenting them as something they said would be a
+    # fabrication the model then reasons from.
+    context: list[str] | None = Field(default=None, max_length=8)
 
 
 class TicketDraft(BaseModel):

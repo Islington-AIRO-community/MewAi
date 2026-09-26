@@ -4,11 +4,15 @@ import * as React from 'react';
 import {
   createTicket,
   emptyDraft,
+  isRequestRejection,
+  AiRequestError,
   sendChatTurn,
+  WIRE_LIMITS,
   type ChatTurnResult,
   type SlotName,
   type StoredTicket,
   type TicketDraft,
+  type WireMessage,
 } from '@/lib/ai-client';
 import { missingSlots } from '@/lib/ticket-intake';
 import type { ChatMessage, SupportType } from '@/lib/types';
@@ -60,6 +64,13 @@ export interface AiChatState {
 export interface AiChatApi extends AiChatState {
   /** Send a user turn and fold the assistant's answer into the transcript. */
   send: (text: string, opts?: { viaVoice?: boolean }) => Promise<void>;
+  /**
+   * Record how the reporter arrived — a category tile they tapped, say — as
+   * context for the model and a visible system line. Never a user utterance:
+   * the reporter did not type it, and telling Gemini they did would be a
+   * fabrication with consequences for what the model believes they need.
+   */
+  noteIntent: (text: string) => void;
   /** Patch the working draft from the review form. */
   edit: (patch: Partial<TicketDraft>) => void;
   /** Toggle a support type on the draft. */
@@ -74,8 +85,20 @@ export interface AiChatApi extends AiChatState {
    * without this the composer is the only thing an outage leaves behind.
    */
   openReview: () => void;
-  /** Start a fresh ticket, keeping the transcript. */
+  /**
+   * Close the review form and keep talking about the same emergency. The model
+   * keeps its context; the draft is cleared.
+   */
   reset: () => void;
+  /**
+   * Start a separate emergency in the same conversation.
+   *
+   * The visible transcript is kept and the model's context is cut, so the next
+   * ticket starts from what the reporter says next rather than inheriting the
+   * previous one's name, phone and urgency. The `sessionId` is unchanged, so both
+   * tickets are still grouped as one conversation server-side.
+   */
+  startNewCase: () => void;
   /** Write the ticket. Resolves with the stored ticket, or null if rejected. */
   submit: () => Promise<StoredTicket | null>;
   /** Back to the conversation after reviewing a submitted ticket. */
@@ -112,11 +135,51 @@ const SLOT_TO_FIELD: Record<SlotName, keyof TicketDraft> = {
   peopleAffected: 'people_affected',
 };
 
+/**
+ * The other direction, and the one the review form needs.
+ *
+ * `edits` is keyed by `SlotName` because that is what the backend's
+ * `_apply_edits` looks up in its camelCase `TicketDraft`. The draft is keyed by
+ * snake_case because that is what the wire uses. The form edits the draft, so
+ * the mapping has to happen here — keying `edits` by the draft field name
+ * instead meant every hand correction was silently dropped on the way to
+ * `_apply_edits`, and a reporter's fix to their own address evaporated on the
+ * next turn.
+ */
+const FIELD_TO_SLOT: Partial<Record<keyof TicketDraft, SlotName>> = Object.fromEntries(
+  (Object.entries(SLOT_TO_FIELD) as [SlotName, keyof TicketDraft][]).map(([slot, field]) => [
+    field,
+    slot,
+  ]),
+) as Partial<Record<keyof TicketDraft, SlotName>>;
+
+/**
+ * The draft as a `SlotName` -> string map, for the facts block.
+ *
+ * `support_needed` and `urgency` are serialised rather than skipped: they are
+ * real answers, and a model that cannot see the classification it already made
+ * will ask about them again. Everything empty is dropped, so the block stays
+ * proportional to what has actually been established.
+ */
+function knownFactsFrom(draft: TicketDraft): Record<string, string> | undefined {
+  const facts: Record<string, string> = {};
+  for (const [field, slot] of Object.entries(FIELD_TO_SLOT) as [
+    keyof TicketDraft,
+    SlotName,
+  ][]) {
+    const value = draft[field];
+    if (value === null || value === undefined) continue;
+    const serialised = Array.isArray(value) ? value.join(', ') : String(value);
+    if (serialised.trim()) facts[slot] = serialised.slice(0, WIRE_LIMITS.maxMessageChars);
+  }
+  return Object.keys(facts).length ? facts : undefined;
+}
+
 export function useAiChat(): AiChatApi {
   const {
-    messages,
     sendMessage,
     appendAssistantMessage,
+    appendSystemMessage,
     scriptedReplyFor,
     createReportFromTicket,
   } = useApp();
@@ -128,21 +191,45 @@ export function useAiChat(): AiChatApi {
     typeof window === 'undefined' ? 'ssr' : `sess-${makeId('x').slice(2)}`,
   );
 
-  // The transcript is replayed to the backend on every turn, but only the real
-  // conversation — the seeded demo messages in mock-data would otherwise be sent
-  // as if the user had said them.
-  const transcript = React.useRef<{ role: 'user' | 'assistant'; text: string }[]>([]);
-  const synced = React.useRef(false);
-  if (!synced.current) {
-    synced.current = true;
-    transcript.current = messages
-      .filter((m) => m.role === 'user' || m.role === 'assistant')
-      .map((m) => ({ role: m.role as 'user' | 'assistant', text: m.text }));
-  }
+  // The transcript Gemini is shown for the case currently being taken.
+  //
+  // It starts empty, and that is the fix for a serious bug rather than a
+  // preference: this used to be seeded from the store's `INITIAL_MESSAGES`, so
+  // the demo's fabricated conversation — a trapped family at Fairmount
+  // Apartments, a neighbour named Mr. Whitfield — was replayed to Gemini as
+  // though the reporter had said all of it. The model then answered *that*
+  // incident. It also meant a new visitor's first turn arrived with seven
+  // turns of someone else's emergency in context.
+  //
+  // The visible transcript in the store is unaffected and keeps its seed; that
+  // is demo content for the dashboard, and the store's scripted replies depend
+  // on it. It is simply no longer treated as something the user said.
+  const transcript = React.useRef<WireMessage[]>([]);
 
   // Hand-edited values, re-sent on every turn so a correction in the review
   // form is never reverted by the model's next answer.
   const edits = React.useRef<Record<string, string>>({});
+
+  /**
+   * Things the reporter did rather than said.
+   *
+   * `/chat?intent=medical` used to synthesise a first-person sentence — "I need
+   * help with medical. …" — and send it as a *user* turn. That put words in the
+   * reporter's mouth in the transcript they can see, and told Gemini they had
+   * said it. A category is a real fact about how they arrived, so it is sent as
+   * a fact and never as an utterance.
+   */
+  const context = React.useRef<string[]>([]);
+
+  const noteIntent = React.useCallback(
+    (text: string) => {
+      const line = text.trim();
+      if (!line || context.current.includes(line)) return;
+      context.current = [...context.current, line].slice(-8);
+      appendSystemMessage(line);
+    },
+    [appendSystemMessage],
+  );
 
   const send = React.useCallback(
     async (text: string, opts?: { viaVoice?: boolean }) => {
@@ -158,79 +245,126 @@ export function useAiChat(): AiChatApi {
       // canned reply would read as the answer.
       await sendMessage(trimmed, { ...opts, deferReply: true });
 
+      // What the model is told it already knows, and the one block it must
+      // treat as authoritative. Sent together: the facts are what survives the
+      // transcript window, and the corrections are what must never be
+      // overwritten by anything the model says next.
+      const facts = knownFactsFrom(state.draft);
+      const corrections = Object.keys(edits.current).length
+        ? ({ ...edits.current } as Partial<Record<SlotName, string>>)
+        : undefined;
+
+      const request = {
+        messages: transcript.current,
+        sessionId: sessionId.current,
+        knownFacts: facts,
+        editedDraft: corrections,
+        context: context.current.length ? context.current : undefined,
+      };
+
+    try {
+      let turn: ChatTurnResult;
       try {
-        const turn: ChatTurnResult = await sendChatTurn({
-          messages: transcript.current,
-          sessionId: sessionId.current,
-          editedDraft: Object.keys(edits.current).length
-            ? { ...edits.current }
-            : undefined,
+        turn = await sendChatTurn(request);
+      } catch (error) {
+        if (!isRequestRejection(error)) throw error;
+        // Reached the service, and it said no. The only cause at this size is
+        // the request being too big, so try once with a much smaller window
+        // before giving up — a single dropped turn is a real cost to someone
+        // mid-emergency, and it is recoverable.
+        turn = await sendChatTurn({
+          ...request,
+          maxChars: Math.floor(WIRE_LIMITS.maxChars / 2),
         });
+      }
 
-        const draft = mergeDraft(state.draft, turn.draft);
-        const missing = turn.missing ?? missingSlots(draft);
-        transcript.current = [
-          ...transcript.current,
-          { role: 'assistant', text: turn.reply },
-        ];
 
-        appendAssistantMessage({
-          text: turn.reply,
-          confidence: turn.confidence,
-          offline: turn.degraded,
-        });
+      const draft = mergeDraft(state.draft, turn.draft);
+      const missing = turn.missing ?? missingSlots(draft);
+      transcript.current = [...transcript.current, { role: 'assistant', text: turn.reply }];
 
-        // Drop edits for values the user has since changed, so a stale
-        // correction cannot pin a field to something they just fixed.
-        for (const key of Object.keys(edits.current)) {
-          const field = SLOT_TO_FIELD[key as SlotName];
-          if (field && draft[field] !== edits.current[key]) delete edits.current[key];
-        }
+      appendAssistantMessage({
+        text: turn.reply,
+        confidence: turn.confidence,
+        offline: turn.degraded,
+      });
 
+      // Drop edits for values the user has since changed, so a stale correction
+      // cannot pin a field to something they just fixed. Keyed by `SlotName` for
+      // the same reason `edit()` writes them that way.
+      for (const slot of Object.keys(edits.current) as SlotName[]) {
+        const field = SLOT_TO_FIELD[slot];
+        if (field && draft[field] !== edits.current[slot]) delete edits.current[slot];
+      }
+
+      setState((prev) => ({
+        ...prev,
+        busy: false,
+        // Opened off the client-computed `missing`, not the server's
+        // `is_complete`. The two are derived from the same rule
+        // (`missingSlots` mirrors `missing_slots`), but the server can only
+        // say yes after a successful Gemini turn — and the degraded turn
+        // never carries a name, number or location, so during an outage
+        // `is_complete` was permanently false. That made the one durable way
+        // to file a ticket conditional on the AI being up, which is exactly
+        // backwards for a disaster. `submit()` re-checks locally and the
+        // backend checks again, so an over-eager open still cannot write an
+        // incomplete ticket.
+        status: missing.length === 0 ? 'review' : 'thinking',
+        draft,
+        missing,
+        asking: turn.next_questions ?? [],
+        offline: turn.degraded,
+        safetyNote: turn.safety_note ?? '',
+        // A complete draft invalidates a previous rejection.
+        rejected: missing.length === 0 ? [] : prev.rejected,
+        error: '',
+      }));
+    } catch (error) {
+      // Both failures below put a *non-model* answer in the transcript, so both
+      // mark it `offline` — that badge means "this did not come from the
+      // assistant", which is true either way. What differs is what we tell the
+      // reporter about why, and that difference is the whole point of `AiRequestError`.
+      const fallback = scriptedReplyFor(trimmed);
+      transcript.current = [...transcript.current, { role: 'assistant', text: fallback.text }];
+      appendAssistantMessage({ ...fallback, offline: true });
+
+      if (isRequestRejection(error)) {
+        // The service is up and working. This request was refused twice, which
+        // is a defect on our side. Reporting it as an outage would be the worst
+        // possible answer here: it tells someone mid-emergency to stop using
+        // the one channel that works, on the strength of a bug.
         setState((prev) => ({
           ...prev,
           busy: false,
-          // Opened off the client-computed `missing`, not the server's
-          // `is_complete`. The two are derived from the same rule
-          // (`missingSlots` mirrors `missing_slots`), but the server can only
-          // say yes after a successful Gemini turn — and the degraded turn
-          // never carries a name, number or location, so during an outage
-          // `is_complete` was permanently false. That made the one durable way
-          // to file a ticket conditional on the AI being up, which is exactly
-          // backwards for a disaster. `submit()` re-checks locally and the
-          // backend checks again, so an over-eager open still cannot write an
-          // incomplete ticket.
-          status: missing.length === 0 ? 'review' : 'thinking',
-          draft,
-          missing,
-          asking: turn.next_questions ?? [],
-          offline: turn.degraded,
-          safetyNote: turn.safety_note ?? '',
-          // A complete draft invalidates a previous rejection.
-          rejected: missing.length === 0 ? [] : prev.rejected,
+          offline: true,
+          error: 'The assistant could not accept this message. Your details are still here — try again in a moment.',
         }));
-      } catch {
-        // Backend down, key wrong, or a network blip. Fall back to the scripted
-        // reply so the transcript is not left hanging on a typing indicator, and
-        // mark it `offline` so the UI says where the answer came from.
-        const fallback = scriptedReplyFor(trimmed);
-        transcript.current = [
-          ...transcript.current,
-          { role: 'assistant', text: fallback.text },
-        ];
-        appendAssistantMessage({ ...fallback, offline: true });
-        setState((prev) => ({ ...prev, busy: false, offline: true }));
+        return;
       }
-    },
-    [sendMessage, appendAssistantMessage, scriptedReplyFor, state.draft],
-  );
+
+      // Backend down, key wrong, or a network blip. Fall back to the scripted
+      // reply so the transcript is not left hanging on a typing indicator, and
+      // mark it `offline` so the UI says where the answer came from.
+      setState((prev) => ({ ...prev, busy: false, offline: true }));
+    }
+    // `state.draft` is the draft as it was when this turn was sent, which is the
+    // correct thing to merge the answer into. It re-creates the callback on
+    // every keystroke in the review form, which is harmless.
+  }, [sendMessage, appendAssistantMessage, scriptedReplyFor, state.draft]);
 
   const edit = React.useCallback((patch: Partial<TicketDraft>) => {
     setState((prev) => {
       const draft = { ...prev.draft, ...patch };
-      // Record the edit so the next assistant turn cannot revert it.
-      for (const [key, value] of Object.entries(patch)) {
-        if (typeof value === 'string' && value.trim()) edits.current[key] = value;
+      // Record the edit so the next assistant turn cannot revert it. Keyed by
+      // `SlotName`, not by the draft's field name: this is the map the backend
+      // reads, and keying it the other way is what made corrections vanish.
+      for (const [field, value] of Object.entries(patch) as [
+        keyof TicketDraft,
+        unknown,
+      ][]) {
+        const slot = FIELD_TO_SLOT[field];
+        if (slot && typeof value === 'string' && value.trim()) edits.current[slot] = value;
       }
       return {
         ...prev,
@@ -252,9 +386,9 @@ export function useAiChat(): AiChatApi {
         ? prev.draft.support_needed.filter((t) => t !== type)
         : [...prev.draft.support_needed, type];
       const draft = { ...prev.draft, support_needed };
-      for (const key of Object.keys(edits.current)) {
-        if (key === 'support_needed') delete edits.current[key];
-      }
+      // A toggle is the reporter choosing between options the model offered, not
+      // a correction of a value, so it must stop overriding the model.
+      delete edits.current.supportNeeded;
       return {
         ...prev,
         draft,
@@ -277,8 +411,42 @@ export function useAiChat(): AiChatApi {
     });
   }, []);
 
+  /**
+   * Close the review form and go back to the conversation.
+   *
+   * The model context is kept, which is the part that matters here: someone who
+   * opened the form to check a detail and came back should not have to answer
+   * the same questions from scratch. Starting a genuinely different emergency is
+   * `startNewCase`, which cuts the context.
+   *
+   * Note the draft is still cleared, which is long-standing behaviour and
+   * arguably wrong — the "Back to the conversation" button in the review form
+   * claims to preserve a half-filled report and does not. Left as-is rather than
+   * changed here, because silently making "back" mean "keep everything" would
+   * blur the two intentions this pair of functions exists to separate.
+   */
   const reset = React.useCallback(() => {
     edits.current = {};
+    setState({ ...INITIAL, draft: emptyDraft(), missing: missingSlots(emptyDraft()) });
+  }, []);
+
+  /**
+   * Begin a separate emergency in the same conversation.
+   *
+   * This is the case boundary. The visible transcript stays — the reporter
+   * should not lose what they already told us, and a second case in the same
+   * session is normal — but the *wire* transcript is cleared, so the model
+   * stops answering about Fairmount Apartments once the conversation has moved
+   * to a different address. The `sessionId` is also kept, which is what lets
+   * the backend group both tickets as one conversation rather than two strangers.
+   *
+   * Without this, everything either ticket needs bled into the other: the
+   * second ticket inherited the first one's name, phone and urgency.
+   */
+  const startNewCase = React.useCallback(() => {
+    edits.current = {};
+    transcript.current = [];
+    context.current = [];
     setState({ ...INITIAL, draft: emptyDraft(), missing: missingSlots(emptyDraft()) });
   }, []);
 
@@ -368,11 +536,13 @@ export function useAiChat(): AiChatApi {
   return {
     ...state,
     send,
+    noteIntent,
     edit,
     toggleSupport,
     setOnBehalf,
     openReview,
     reset,
+    startNewCase,
     submit,
     dismissTicket,
   };
@@ -417,42 +587,45 @@ function mergeDraft(current: TicketDraft, incoming: TicketDraft): TicketDraft {
   return merged;
 }
 
-/** Pull the backend's 422 field list out of a failed request. */
+/**
+ * Pull the backend's rejected field list out of a failed request.
+ *
+ * Read from `error.body`, not `error.message`. The message is the body truncated
+ * to 200 characters, so a 422 with more than a couple of fields in it was cut off
+ * mid-array and this returned `[]` — the form then showed the error banner and
+ * highlighted nothing, which is worse than no highlight at all.
+ */
 function rejectedSlots(error: unknown): SlotName[] {
-  if (!(error instanceof Error)) return [];
-  const match = error.message.match(/"missing":\s*\[([^\]]*)\]/);
+  if (!(error instanceof AiRequestError)) return [];
+  const match = error.body.match(/"missing":\s*\[([^\]]*)\]/);
   if (!match) return [];
   const names = match[1]
     .split(',')
     .map((s) => s.trim().replace(/"/g, ''))
     .filter(Boolean);
-  return names.filter((name): name is SlotName =>
-    [
-      'reporterName',
-      'reporterPhone',
-      'victimName',
-      'victimPhone',
-      'summary',
-      'location',
-      'supportNeeded',
-      'urgency',
-      'peopleAffected',
-    ].includes(name),
-  );
+  return names.filter((name): name is SlotName => name in SLOT_TO_FIELD);
 }
 
+/**
+ * What to tell the reporter when filing fails.
+ *
+ * Keyed on the status code rather than matched against the error text, because
+ * the two outages here mean opposite things: `502` is our network to the service,
+ * `503` is the service with no database. Telling someone their ticket is safe
+ * when it was never written, or that the service is gone when it is merely
+ * unreachable, costs them the one durable thing this app has.
+ */
 function ticketErrorMessage(error: unknown): string {
-  if (!(error instanceof Error)) return 'The ticket could not be created.';
-  if (/backend_unreachable/.test(error.message)) {
+  if (!(error instanceof AiRequestError)) {
+    return 'The ticket could not be created. Your details are still here — try again.';
+  }
+  if (error.status === 502 || error.body.includes('backend_unreachable')) {
     return 'The relief service could not be reached. Your details are still here — try again in a moment.';
   }
-  // The backend is up and answering, but its database is not. Distinct from
-  // both the validation and the unreachable cases: retrying in a moment is
-  // right, and the reporter should know nothing is wrong with what they typed.
-  if (/\b503\b/.test(error.message)) {
+  if (error.status === 503) {
     return 'The ticket service is temporarily down and no ticket was saved. Everything you entered is still here — try again in a moment.';
   }
-  if (/\b(422|400)\b/.test(error.message)) {
+  if (error.status === 400 || error.status === 422) {
     return 'The service rejected some details. Check the highlighted fields.';
   }
   return 'The ticket could not be created. Your details are still here — try again.';

@@ -52,6 +52,16 @@ interface AppContextValue extends AppState {
   }) => void;
   /** The scripted reply for a message, without sending it. */
   scriptedReplyFor: (text: string) => { text: string; confidence: number };
+  /**
+   * Record something that happened in the app rather than something anyone said.
+   *
+   * Used where the reporter's real action is not an utterance — tapping a
+   * category tile, say. Rendering it as a `user` message would put words in
+   * their mouth, and rendering it as an `assistant` message would invent a
+   * reply, so it gets its own role and neither. Both the dashboard transcript
+   * and the model context need to see it, and it must be the same line in both.
+   */
+  appendSystemMessage: (text: string) => void;
   confirmActionCard: (cardId: string) => Report | null;
   dismissActionCard: (cardId: string) => void;
   /**
@@ -137,6 +147,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       };
       setMessages((prev) => [...prev, message]);
       setIsResponding(false);
+    },
+    [nextId, nowIso],
+  );
+
+  const appendSystemMessage = React.useCallback<AppContextValue['appendSystemMessage']>(
+    (text) => {
+      setMessages((prev) => [
+        ...prev,
+        { id: nextId('m'), role: 'system', at: nowIso(), text },
+      ]);
     },
     [nextId, nowIso],
   );
@@ -508,6 +528,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       sendMessage,
       isResponding,
       appendAssistantMessage,
+      appendSystemMessage,
       scriptedReplyFor,
       confirmActionCard,
       dismissActionCard,
@@ -525,6 +546,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       sendMessage,
       isResponding,
       appendAssistantMessage,
+      appendSystemMessage,
       scriptedReplyFor,
       confirmActionCard,
       dismissActionCard,

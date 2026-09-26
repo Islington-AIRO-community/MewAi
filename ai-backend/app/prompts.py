@@ -220,16 +220,45 @@ def build_response_schema() -> dict[str, Any]:
 def build_user_text(
     transcript: list[tuple[str, str]],
     edited_draft: dict[str, str] | None,
+    known_facts: dict[str, str] | None = None,
+    context: list[str] | None = None,
 ) -> str:
     """
     Flatten the transcript into the single user turn Gemini sees.
 
-    The whole conversation is replayed in one message rather than using the
-    multi-turn `contents` array: it keeps the "never ask for something the user
-    already told you" instruction effective, and it means an edited draft can be
-    prepended as an authoritative block.
+    The conversation is replayed in one message rather than using the multi-turn
+    `contents` array: it keeps the "never ask for something the user already told
+    you" instruction effective, and it means an edited draft can be prepended as
+    an authoritative block.
+
+    The transcript is *bounded* by the caller, and `known_facts` is what makes
+    that safe. Anything the reporter said before the window starts has already
+    been distilled into `known_facts`, so the model is not relying on
+    remembering the whole exchange — and the prompt says so explicitly, because a
+    model that assumes its context is complete will cheerfully re-ask for a name
+    it was given ten turns ago.
     """
     lines: list[str] = []
+
+    if context:
+        lines.append(
+            "Context about how this conversation started. These are things the "
+            "reporter did or chose, not things they said:\n"
+            + _as_bullets({str(i + 1): line for i, line in enumerate(context)})
+        )
+        lines.append("")
+
+    if known_facts:
+        confirmed = {k: v for k, v in known_facts.items() if str(v).strip()}
+        if confirmed:
+            lines.append(
+                "Details already confirmed earlier in this conversation, kept by "
+                "the app as the recent turns below are trimmed. Treat them as "
+                "established: carry them into the draft and do not ask for them "
+                "again.\n" + _as_bullets(confirmed)
+            )
+            lines.append("")
+
     if edited_draft:
         confirmed = {k: v for k, v in edited_draft.items() if str(v).strip()}
         if confirmed:
@@ -247,8 +276,9 @@ def build_user_text(
     lines.append("")
     lines.append(
         "Return your JSON response now. Fill every draft field with what you know "
-        "from the conversation above, use an empty string for anything you do not "
-        "know, and ask about at most two missing fields in `reply`."
+        "from the conversation above and the confirmed details, use an empty string "
+        "for anything you do not know, and ask about at most two missing fields in "
+        "`reply`."
     )
     return "\n".join(lines)
 

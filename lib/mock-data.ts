@@ -679,13 +679,12 @@ export const INITIAL_MESSAGES: ChatMessage[] = [
     confidence: 0.94,
     actionCardId: 'ac-2',
   },
-  {
-    id: 'm-9',
-    role: 'assistant',
-    at: ts(1),
-    text: 'Both requests are being handled. The rescue crew is about 6 minutes away, and a paramedic is already with Mr. Whitfield. I will keep updating you here.',
-    confidence: 0.99,
-  },
+  /* The seed used to end with an assistant turn promising "the rescue crew is
+     about 6 minutes away, and a paramedic is already with Mr. Whitfield". That
+     was fabricated by the seed, not reported by anyone: a demo line that states
+     a response is en route is the one thing this transcript must never imply,
+     because a reporter reads it as their own situation. Nothing in the app
+     knows when a crew will arrive, so no seeded turn may say. */
 ];
 
 /**
