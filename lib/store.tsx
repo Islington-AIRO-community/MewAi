@@ -76,8 +76,26 @@ interface AppContextValue extends AppState {
   createReportFromTicket: (ticket: StoredTicket) => Report;
   /** Advance a report's lifecycle (used by the demo "simulate" control). */
   advanceStage: (reportId: string) => void;
-  triggerSos: (payload: { label: string; lat: number; lng: number }) => Report;
   getReport: (id: string) => Report | undefined;
+
+  /**
+   * Whether the emergency dialog is open.
+   *
+   * This is shell state, deliberately not a route. `AGENTS.md` rules out a
+   * `/sos` page because SOS is a dialog driven from here and opened from the
+   * header, footer, mobile strip and assistant — a route would be a dead link.
+   *
+   * It lives in the store rather than in `app-shell.tsx` so that *any* surface
+   * can raise an emergency, not only the four the shell happens to own. That
+   * matters: the landing page, `/login` and `/reports` each carried a control
+   * labelled "Send an emergency SOS" that was really a `Link` to `/dashboard`,
+   * so the most prominent emergency affordance in the app did not raise an
+   * emergency. They could not have done better with the state where it was —
+   * they had no way to reach it.
+   */
+  sosOpen: boolean;
+  openSos: () => void;
+  closeSos: () => void;
 }
 
 const AppContext = React.createContext<AppContextValue | null>(null);
@@ -445,78 +463,27 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   /* ---- SOS ---- */
 
-  const triggerSos = React.useCallback<AppContextValue['triggerSos']>(
-    ({ label, lat, lng }) => {
-      const seq = nextReportSeq;
-      setNextReportSeq((n) => n + 1);
-      const id = String(seq);
-      const at = nowIso();
+  /**
+   * Nothing in the store raises an emergency any more.
+   *
+   * `triggerSos` used to build a `Report` in memory, mark it `dispatched`,
+   * assign "Medic Alpha-2" with a 4-minute ETA, and write a timeline entry
+   * saying auto-dispatch had already happened. None of that was true: no
+   * request left the browser and no crew was dispatched. The SOS dialog now
+   * files a real ticket through `lib/sos-ticket.ts` and calls
+   * `createReportFromTicket` with the row that came back, so this had exactly
+   * one caller and no reason to stay.
+   *
+   * Removed rather than left unused on purpose. A fake dispatcher that still
+   * has a caller is one refactor away from being wired back to the button, and
+   * the rule about never faking a model answer silently applies here as much as
+   * it does to a degraded reply: during an emergency an invented dispatch is
+   * worse than a visible gap.
+   */
 
-      const report: Report = {
-        id,
-        title: `SOS — ${label}`,
-        summary: `Distress signal triggered from the SOS quick-access bar. ${label}. Location shared live with the nearest response units.`,
-        category: 'medical',
-        priority: 'critical',
-        departmentId: 'dept-medical',
-        reporterName: user?.name ?? 'You',
-        createdAt: at,
-        updatedAt: at,
-        currentStage: 'dispatched',
-        stageTimestamps: { submitted: at, triage: at, dispatched: at },
-        location: {
-          label: 'Live location',
-          area: 'Northbank Region',
-          lat,
-          lng,
-          landmark: 'GPS fix from your device',
-        },
-        peopleAffected: 1,
-        vulnerability: ['Distress signal'],
-        contactPreference: 'call',
-        channel: 'sos',
-        etaMinutes: 4,
-        responder: {
-          name: 'Medic Alpha-2',
-          unit: 'EMS Rapid Response',
-          callSign: 'ALPHA-2',
-          etaMinutes: 4,
-          certifications: ['ALS', 'Rapid Response'],
-        },
-        extracted: [
-          { label: 'Signal', value: '1-tap SOS', confidence: 1 },
-          { label: 'Location', value: `Live GPS ${lat.toFixed(4)}, ${lng.toFixed(4)}`, confidence: 1 },
-          { label: 'Priority', value: 'CRITICAL', confidence: 1 },
-        ],
-        timeline: [
-          {
-            id: nextId('e'),
-            at,
-            stageId: 'submitted',
-            title: 'SOS distress signal sent',
-            detail: `One-tap emergency alert with live location: ${label}.`,
-            actor: user?.name ?? 'You',
-            actorRole: 'reporter',
-            tags: ['SOS', '1 tap'],
-          },
-          {
-            id: nextId('e'),
-            at,
-            stageId: 'dispatched',
-            title: 'Nearest units auto-dispatched',
-            detail: 'Fastest two crews diverted to the signal location. ETA 4 minutes.',
-            actor: 'FLARE Auto-Dispatch',
-            actorRole: 'system',
-            tags: ['Auto-dispatch', 'ETA 4 min'],
-          },
-        ],
-      };
-
-      setReports((prev) => [report, ...prev]);
-      return report;
-    },
-    [nextReportSeq, nowIso, nextId, user],
-  );
+  const [sosOpen, setSosOpen] = React.useState(false);
+  const openSos = React.useCallback(() => setSosOpen(true), []);
+  const closeSos = React.useCallback(() => setSosOpen(false), []);
 
   const value = React.useMemo<AppContextValue>(
     () => ({
@@ -534,8 +501,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       dismissActionCard,
       createReportFromTicket,
       advanceStage,
-      triggerSos,
       getReport,
+      sosOpen,
+      openSos,
+      closeSos,
     }),
     [
       user,
@@ -552,8 +521,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       dismissActionCard,
       createReportFromTicket,
       advanceStage,
-      triggerSos,
       getReport,
+      sosOpen,
+      openSos,
+      closeSos,
     ],
   );
 

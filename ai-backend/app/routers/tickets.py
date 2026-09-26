@@ -213,15 +213,19 @@ async def list_my_tickets(
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ) -> TicketListResponse:
+    # `_store` first, before the header check, so an unreachable database is
+    # reported as 503 rather than as a missing account. Ordering these the other
+    # way round made a database outage indistinguishable from a signed-out
+    # visitor, and the reporter's own list is precisely where that is least
+    # acceptable.
+    store = _store(request)
     owner = _request_owner(request)
     if owner is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="No account on this request.",
         )
-    total, page = await _store(request).list_for_owner(
-        owner, limit=limit, offset=offset
-    )
+    total, page = await store.list_for_owner(owner, limit=limit, offset=offset)
     return TicketListResponse(total=total, tickets=page)
 
 
@@ -250,7 +254,20 @@ async def claim_ticket(payload: TicketClaim, request: Request) -> Ticket:
     reference exists at all — which is why this cannot report "that ticket
     already has an owner" separately either. The owner comes from the header, so
     the caller can only ever claim *for themselves*.
+
+    The one thing that is reported separately is an unreachable database, which
+    is a 503 rather than a 404. That is not a hole in the rule above: 404 here
+    means "no claimable ticket matches", and a database outage must not be
+    allowed to say that, because the reporter would conclude the ticket they
+    filed anonymously does not exist. A 503 describes the server rather than any
+    ticket, so it tells a caller nothing they could have guessed row by row.
     """
+    # `_store` before the owner check, for the same reason as `/mine`: with the
+    # database down this used to answer 404, telling someone who had just filed
+    # anonymously that their ticket did not exist. The 503 says "nothing was
+    # saved, try again", which is the truth. It discloses nothing about any
+    # ticket — it is the state of the server, not an answer about a row.
+    store = _store(request)
     owner = _request_owner(request)
     if not owner:
         # Claiming exists to attach a ticket to an account, so an anonymous
@@ -259,7 +276,6 @@ async def claim_ticket(payload: TicketClaim, request: Request) -> Ticket:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=_CLAIM_REFUSED
         )
-    store = _store(request)
     # `normalise_phone` on the submitted value, because the stored one is already
     # normalised and a reporter who retypes "07700 900123" must still match the
     # "07700900123" that was saved. Without this, correct users get locked out of

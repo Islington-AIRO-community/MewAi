@@ -31,7 +31,7 @@ const STAGE_GROUP: Record<string, StageId[]> = {
 };
 
 export default function ReportsPage() {
-  const { reports } = useApp();
+  const { reports, openSos } = useApp();
   const [status, setStatus] = React.useState<StatusFilter>('all');
   const [priority, setPriority] = React.useState<Priority | 'any'>('any');
   const [category, setCategory] = React.useState<string>('any');
@@ -126,11 +126,20 @@ export default function ReportsPage() {
                   New voice report
                 </Link>
               </Button>
-              <Button asChild variant="sos" size="lg" className="stripe-critical">
-                <Link href="/dashboard">
-                  <PhoneCall aria-hidden="true" />
-                  Emergency SOS
-                </Link>
+              {/*
+                Opens the dialog rather than navigating. This was a link to
+                `/dashboard` behind an emergency label, so the control a responder
+                would reach for mid-incident took them to a dashboard instead.
+              */}
+              <Button
+                type="button"
+                variant="sos"
+                size="lg"
+                className="stripe-critical"
+                onClick={openSos}
+              >
+                <PhoneCall aria-hidden="true" />
+                Emergency SOS
               </Button>
             </div>
           </div>

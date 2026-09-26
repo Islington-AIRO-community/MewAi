@@ -342,6 +342,23 @@ def _apply_edits(draft: TicketDraft, edits: dict[str, str] | None) -> TicketDraf
     The human wins. A correction made in the review form has to survive the next
     assistant turn, otherwise editing a field and then answering the
     assistant's next question would silently revert it.
+
+    The key set below is deliberately exhaustive over what the client can send,
+    and it is a `match` with no `case _` precisely so that a new editable field
+    fails loudly here rather than silently in production. Two fields are
+    intentionally absent, for opposite reasons:
+
+      - `supportNeeded` is a *choice* rather than a correction. The client drops
+        it from `edits` on every toggle, so a reporter picking between options
+        the model offered must not then pin the model to that pick.
+      - `peopleAffected` is present but free text, so it is assigned verbatim
+        and coerced later by `TicketCreate`.
+
+    An arm that is missing does not raise — it falls through the match and the
+    edit is dropped without a trace, which is exactly how `urgency` came to be
+    silently reverted for a reporter who had raised it to `critical` themselves.
+    If you add an editable field on the client, add it here, and add it to
+    `test_intake_rules.py` at the same time.
     """
     if not edits:
         return draft
@@ -363,4 +380,24 @@ def _apply_edits(draft: TicketDraft, edits: dict[str, str] | None) -> TicketDraf
                 draft.people_affected = value
             case "notes":
                 draft.notes = value
+            case "urgency":
+                # Coerced through the enum, never assigned raw. `urgency` is the
+                # field triage reads first, so an unvalidated string here would
+                # either raise later in `_to_ticket` or, worse, persist a value
+                # outside the vocabulary the whole system agrees on.
+                #
+                # An unrecognised value keeps whatever the model said. That is
+                # deliberate: silently ignoring a bad correction is recoverable,
+                # whereas writing garbage into a triage field is not — and the
+                # reporter still sees the value the model chose on the next
+                # turn, so the discrepancy is visible rather than hidden.
+                try:
+                    draft.urgency = Urgency(value.strip().lower())
+                except ValueError:
+                    log.warning(
+                        "edited urgency %r is not one of %s; keeping %r",
+                        value,
+                        ", ".join(u.value for u in Urgency),
+                        draft.urgency,
+                    )
     return draft

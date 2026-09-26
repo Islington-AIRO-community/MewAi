@@ -207,6 +207,73 @@ def test_people_affected_stays_free_text():
     assert result.people_affected == "the two of us"
 
 
+# Every field the review form can edit, and the value an edit carries.
+#
+# This sweep is the regression net for the bug this replaced: `urgency` was sent
+# by the client, had no `case` in `_apply_edits`, and was therefore dropped
+# without a trace — so a reporter who raised their own urgency to `critical` had
+# it silently reverted on the next assistant turn, in the one field triage reads
+# first. An absent arm raises nothing; it just falls through the `match`, so only
+# a test that asserts each field can individually be edited will notice.
+#
+# `supportNeeded` is deliberately absent. A toggle is a *choice* between options
+# the model offered, not a correction of a value, so the client drops it from
+# `edits` in `toggleSupport` and it must not be pinned here.
+@pytest.mark.parametrize(
+    "key,value,attribute,expected",
+    [
+        ("reporterName", "Amina Yusuf-Moore", "reporter_name", "Amina Yusuf-Moore"),
+        ("reporterPhone", "0722 555 900", "reporter_phone", "0722 555 900"),
+        ("victimName", "Joseph Mukuru", "victim_name", "Joseph Mukuru"),
+        ("victimPhone", "0722 555 901", "victim_phone", "0722 555 901"),
+        ("summary", "The ceiling came down on her.", "summary", "The ceiling came down on her."),
+        ("location", "Flat 4B, 12 Beacon St", "location", "Flat 4B, 12 Beacon St"),
+        ("peopleAffected", "the two of us", "people_affected", "the two of us"),
+        ("notes", "Two dogs with us.", "notes", "Two dogs with us."),
+        ("urgency", "high", "urgency", Urgency.HIGH),
+    ],
+)
+def test_every_editable_field_survives_the_next_turn(key, value, attribute, expected):
+    result = _apply_edits(draft(), {key: value})
+    assert getattr(result, attribute) == expected
+
+
+@pytest.mark.parametrize("value", ["critical", "CRITICAL", "  high  ", "Medium", "low"])
+def test_edited_urgency_is_coerced_rather_than_assigned_raw(value):
+    """The wire is free text; the column is an enum."""
+    expected = Urgency(value.strip().lower())
+    assert _apply_edits(draft(), {"urgency": value}).urgency == expected
+
+
+@pytest.mark.parametrize("value", ["urgent", "asap", "3", "", "critical-ish", "none"])
+def test_an_unrecognised_urgency_keeps_the_models_value(value):
+    """
+    A bad correction is ignored, not written.
+
+    `urgency` is the field triage reads first, so writing an out-of-vocabulary
+    string into it would either raise later in `_to_ticket` or persist a value
+    the rest of the system has no vocabulary for. Keeping the model's value is
+    recoverable and visible — the reporter sees the model's choice on the next
+    turn and can correct it again — whereas a garbage triage value is neither.
+    """
+    result = _apply_edits(draft(urgency=Urgency.HIGH), {"urgency": value})
+    assert result.urgency == Urgency.HIGH
+
+
+def test_notes_are_an_edit_but_not_a_fact():
+    """
+    `notes` is the one editable field with no `SlotName`.
+
+    It is free text the reporter adds rather than a fact the model established,
+    which is why the client's `known_facts` block must not carry it — the
+    backend's `_clean_facts` drops any key that is not a real `SlotName`, so
+    sending one would be noise. It is still a correction, so `_apply_edits` must
+    accept it.
+    """
+    assert "notes" not in {s.value for s in SlotName}
+    assert _apply_edits(draft(), {"notes": "Two dogs with us."}).notes == "Two dogs with us."
+
+
 # ------------------------------------------------------------- payload handling
 
 

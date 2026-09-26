@@ -351,7 +351,7 @@ class TicketStore:
         return [_to_message(row) for row in rows]
 
     async def stats(self) -> dict[str, int]:
-        """Counts by status and by support type, for the admin view later."""
+        """Counts by status and by support type, for the admin view."""
         pool = self._require_pool()
         by_status = await pool.fetch(
             "SELECT status, count(*)::int AS n FROM relief_tickets GROUP BY status"
@@ -359,18 +359,22 @@ class TicketStore:
         by_urgency = await pool.fetch(
             "SELECT urgency, count(*)::int AS n FROM relief_tickets GROUP BY urgency"
         )
-        by_support: dict[str, int] = {}
-        rows = await pool.fetch(
-            "SELECT support_needed FROM relief_tickets"
+        # `unnest` in the database, not a full-table read unnested in Python.
+        # `support_needed` is a `text[]`, so a ticket contributes to every class
+        # it asked for and the counts legitimately sum to more than the total.
+        # Doing this in Python meant selecting every row in the table to count
+        # them, which is a table scan whose cost grows with the queue — on the one
+        # query an admin screen runs on every load.
+        by_support_rows = await pool.fetch(
+            "SELECT tag, count(*)::int AS n"
+            " FROM relief_tickets, unnest(support_needed) AS tag"
+            " GROUP BY tag"
         )
-        for row in rows:
-            for tag in row["support_needed"] or []:
-                by_support[tag] = by_support.get(tag, 0) + 1
         return {
             "total": sum(int(r["n"]) for r in by_status),
             "by_status": {r["status"]: int(r["n"]) for r in by_status},
             "by_urgency": {r["urgency"]: int(r["n"]) for r in by_urgency},
-            "by_support": by_support,
+            "by_support": {r["tag"]: int(r["n"]) for r in by_support_rows},
         }
 
 
