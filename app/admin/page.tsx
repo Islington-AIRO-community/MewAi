@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { AlertCircle, ClipboardList, Loader2, RefreshCw, ShieldAlert } from 'lucide-react';
+import { AlertCircle, ClipboardList, Loader2, Mic, RefreshCw, ShieldAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import {
@@ -10,14 +10,18 @@ import {
 } from '@/components/assistant/ticket-status';
 import { PRIORITIES, SUPPORT_TYPE_LIST, type SupportType } from '@/lib/types';
 import {
+  describePortalError,
   fetchAdminQueue,
   fetchAdminStats,
+  fetchAdminTranscript,
   setTicketStatus,
   type TicketStats,
+  type TranscriptTurn,
 } from '@/lib/ticket-portal';
 import { formatDateTime } from '@/lib/time';
 import type { StoredTicket, TicketStatus } from '@/lib/ai-client';
 import { cn } from '@/lib/utils';
+import { TicketTranscriptView } from '@/components/assistant/ticket-transcript';
 
 /**
  * The response team's queue.
@@ -354,7 +358,79 @@ function QueueRow({
           </span>
         )}
       </div>
+
+      {/* The spoken intake, for the person actually working this ticket.
+          Collapsed by default here — in a queue it competes with every other
+          row — and opened only on request, so nobody has to read a stranger's
+          account of their worst hour in order to see a phone number.
+
+          Fetched from the admin-scoped proxy on demand rather than listed in the
+          queue response. A queue of 200 tickets would otherwise be 200
+          transcripts' worth of someone's worst hour in memory, fetched for the
+          two responders who open one. */}
+      {ticket.source === 'voice' && (
+        <div className="mt-3 border-t border-navy-100 pt-3.5">
+          <AdminTranscript ticketId={ticket.id} />
+        </div>
+      )}
     </Card>
+  );
+}
+
+/**
+ * One ticket's transcript, fetched when a responder asks for it.
+ *
+ * A failed read is stated, never hidden. A responder deciding whether to call
+ * someone has to be able to tell "there is no transcript" from "I could not load
+ * it", and a component that renders nothing for both has taken that ability away.
+ */
+function AdminTranscript({ ticketId }: { ticketId: string }) {
+  const [state, setState] = React.useState<
+    { status: 'idle' } | { status: 'loading' } | { status: 'ready'; turns: TranscriptTurn[] } | { status: 'error'; message: string }
+  >({ status: 'idle' });
+
+  if (state.status === 'idle') {
+    return (
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        onClick={() => {
+          setState({ status: 'loading' });
+          void fetchAdminTranscript(ticketId).then((result) => {
+            setState(
+              result.ok
+                ? { status: 'ready', turns: result.value.turns }
+                : { status: 'error', message: describePortalError(result.error) },
+            );
+          });
+        }}
+      >
+        <Mic aria-hidden="true" />
+        Read the transcript of the call
+      </Button>
+    );
+  }
+
+  if (state.status === 'loading') {
+    return (
+      <p className="flex items-center gap-2 text-2xs text-navy-500" role="status" aria-live="polite">
+        <Loader2 className="size-3 animate-spin" aria-hidden="true" />
+        Loading the transcript…
+      </p>
+    );
+  }
+
+  if (state.status === 'error') {
+    return (
+      <p role="alert" className="text-2xs font-semibold leading-relaxed text-alert-700">
+        {state.message}
+      </p>
+    );
+  }
+
+  return (
+    <TicketTranscriptView turns={state.turns} defaultOpen className="mt-1" />
   );
 }
 

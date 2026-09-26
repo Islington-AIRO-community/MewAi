@@ -59,6 +59,18 @@ export interface AiChatState {
   rejected: SlotName[];
   error: string;
   safetyNote: string;
+  /** True once anything has been captured by voice, for the save-and-source path. */
+  viaVoice: boolean;
+  /**
+   * The spoken turns, held until submission.
+   *
+   * In this hook rather than in the live session's component because this is the
+   * one that files the ticket, and a transcript cannot be stored against an id
+   * that does not exist yet. Nothing reads it until `submit()`.
+   */
+  voiceTranscript: { role: 'reporter' | 'assistant'; text: string }[];
+  /** Whether `voiceTranscript` goes with the ticket. */
+  saveVoiceTranscript: boolean;
 }
 
 export interface AiChatApi extends AiChatState {
@@ -73,6 +85,44 @@ export interface AiChatApi extends AiChatState {
   noteIntent: (text: string) => void;
   /** Patch the working draft from the review form. */
   edit: (patch: Partial<TicketDraft>) => void;
+  /**
+   * Fold in a partial set of facts the model asserted mid-conversation.
+   *
+   * Distinct from `edit`, and the difference is load-bearing. `edit` records
+   * every patched value in `edits`, which the backend treats as authoritative and
+   * never overridable — correct for a person correcting a field in the form,
+   * wrong for a model. A voice agent that mishears a phone number once would pin
+   * that number against the reporter's own correction for the rest of the
+   * conversation, and they would have no way to fix it. So this writes the value
+   * and records nothing.
+   *
+   * Also does not change `status`. `edit` moves to `'review'`, which is right
+   * when a person has finished a form and wrong when the first syllable of a
+   * spoken conversation happens to contain a location.
+   */
+  applyExtraction: (patch: Partial<TicketDraft>) => void;
+  /**
+   * Hand the spoken turns to the hook, which holds them until the ticket is
+   * filed.
+   *
+   * The live session owns the audio and knows the order it happened in; the hook
+   * owns submission. Neither can see the other, and the alternative — a
+   * transcript fetched after the insert — has no ticket id to fetch it for, and
+   * leaves a filed ticket with no record of how it was taken if the second write
+   * fails. So the buffer is handed over once and travels with the create.
+   *
+   * Replacing rather than appending: the caller passes the whole conversation,
+   * so a dropped or duplicated buffer is corrected by the next call instead of
+   * compounding.
+   */
+  setVoiceTranscript: (turns: { role: 'reporter' | 'assistant'; text: string }[]) => void;
+  /**
+   * Whether the spoken turns go with the ticket. Default on, and the review form
+   * offers the choice before the reporter commits — a transcript of someone's
+   * worst hour is worth keeping for whoever comes to help, and worth not keeping
+   * if they would rather it were not on file.
+   */
+  setSaveVoiceTranscript: (save: boolean) => void;
   /** Toggle a support type on the draft. */
   toggleSupport: (type: SupportType) => void;
   /** Turn the "reporting for someone else" switch. */
@@ -116,6 +166,9 @@ const INITIAL: AiChatState = {
   rejected: [],
   error: '',
   safetyNote: '',
+  viaVoice: false,
+  voiceTranscript: [],
+  saveVoiceTranscript: true,
 };
 
 function makeId(prefix: string): string {
@@ -264,7 +317,17 @@ export function useAiChat(): AiChatApi {
       if (!trimmed) return;
 
       transcript.current = [...transcript.current, { role: 'user', text: trimmed }];
-      setState((prev) => ({ ...prev, busy: true, status: 'thinking', error: '' }));
+      setState((prev) => ({
+        ...prev,
+        busy: true,
+        status: 'thinking',
+        error: '',
+        // "This intake was at least partly spoken", which is what decides
+        // `source` and whether a transcript travels with the ticket at submit.
+        // A spoken turn that falls back to the text path still counts: the
+        // reporter was talking, and the record of the call is still the call.
+        viaVoice: prev.viaVoice || opts?.viaVoice === true,
+      }));
 
       // `deferReply` puts the user's message into the shared transcript and
       // leaves the assistant turn to us. Letting the store answer first would
@@ -408,6 +471,37 @@ export function useAiChat(): AiChatApi {
     });
   }, []);
 
+  const applyExtraction = React.useCallback((patch: Partial<TicketDraft>) => {
+    // The voice agent's assertions. Written to the draft and to nothing else —
+    // see the interface comment for why `edits` must not be touched.
+    setState((prev) => {
+      const draft = { ...prev.draft, ...patch } as TicketDraft;
+      return {
+        ...prev,
+        draft,
+        missing: missingSlots(draft),
+        viaVoice: true,
+        // Status is left alone on purpose. The conversation decides when the
+        // review form opens, via `openReview` or a text turn that completes the
+        // draft; a mid-sentence extraction is not a decision to stop talking.
+      };
+    });
+  }, []);
+
+  const setVoiceTranscript = React.useCallback(
+    (turns: { role: 'reporter' | 'assistant'; text: string }[]) => {
+      // Last write wins, and that is the intent: the live session passes the
+      // conversation as it stands, so re-rendering the buffer from scratch is
+      // what keeps a dropped turn from becoming permanent.
+      setState((prev) => ({ ...prev, voiceTranscript: turns }));
+    },
+    [],
+  );
+
+  const setSaveVoiceTranscript = React.useCallback((save: boolean) => {
+    setState((prev) => ({ ...prev, saveVoiceTranscript: save }));
+  }, []);
+
   const toggleSupport = React.useCallback((type: SupportType) => {
     setState((prev) => {
       const has = prev.draft.support_needed.includes(type);
@@ -513,6 +607,15 @@ export function useAiChat(): AiChatApi {
         on_behalf_of_other: draft.on_behalf_of_other,
         notes: draft.notes,
         session_id: sessionId.current,
+        // Both of these travel with the ticket, and the backend writes them in
+        // one transaction. A ticket filed by voice that records what it asked
+        // but not what it heard is a record a responder cannot act on, so
+        // neither is sent alone: `source` and `transcript` are decided together
+        // or not at all. The proxy drops a transcript on a non-voice ticket, so
+        // this is belt-and-braces against our own future caller.
+        source: state.viaVoice ? 'voice' : 'ai-chat',
+        transcript:
+          state.viaVoice && state.saveVoiceTranscript ? state.voiceTranscript : undefined,
       });
 
       // The ticket is written server-side. Mirror it into the report list so it
@@ -567,6 +670,9 @@ export function useAiChat(): AiChatApi {
     send,
     noteIntent,
     edit,
+    applyExtraction,
+    setVoiceTranscript,
+    setSaveVoiceTranscript,
     toggleSupport,
     setOnBehalf,
     openReview,

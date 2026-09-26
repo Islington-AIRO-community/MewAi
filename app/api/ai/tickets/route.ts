@@ -3,6 +3,7 @@ import type { SupportType } from '@/lib/types';
 import { sessionEmail } from '../_session';
 import {
   AI_TIMEOUT_MS,
+  MAX_TRANSCRIPT_MESSAGES,
   backendUnreachable,
   backendUrl,
   badRequest,
@@ -32,6 +33,11 @@ const SUPPORT_TYPES = new Set<SupportType>([
   'security',
 ]);
 const URGENCIES = new Set(['critical', 'high', 'medium', 'low']);
+const SOURCES = new Set(['ai-chat', 'sos', 'voice']);
+const TRANSCRIPT_ROLES = new Set(['reporter', 'assistant']);
+/** Matches `MAX_TRANSCRIPT_TURNS` in the backend, which is the real cap. */
+const MAX_TRANSCRIPT_TURNS = MAX_TRANSCRIPT_MESSAGES;
+const MAX_TRANSCRIPT_TURN_CHARS = 2000;
 
 /** Trim a field to a string, capped, treating null/undefined as absent. */
 function text(value: unknown, max: number): string {
@@ -39,6 +45,37 @@ function text(value: unknown, max: number): string {
   if (typeof value === 'number') return String(value).slice(0, max);
   if (typeof value !== 'string') return '';
   return value.trim().slice(0, max);
+}
+
+/**
+ * The spoken intake, as a bounded list of turns.
+ *
+ * Dropped rather than rejected when it is malformed. A transcript is supporting
+ * evidence for a ticket the reporter is trying to save right now, so failing the
+ * whole submission because one turn had an unexpected shape would trade a
+ * durable request for help for a record of it — the exact inversion this feature
+ * is for. A bad turn is a gap in a transcript, and the ticket is the thing that
+ * matters.
+ *
+ * `seq` is not read from the wire. The backend renumbers on arrival, and two turns
+ * arriving with the same `seq` would collide on a primary key and fail the whole
+ * insert along with the ticket.
+ */
+function transcript(value: unknown): { ok: true; turns: Record<string, unknown>[] } | { ok: false } {
+  if (value === undefined || value === null) return { ok: true, turns: [] };
+  if (!Array.isArray(value)) return { ok: false };
+  const turns: Record<string, unknown>[] = [];
+  for (const entry of value) {
+    if (turns.length >= MAX_TRANSCRIPT_TURNS) break;
+    if (typeof entry !== 'object' || entry === null) continue;
+    const e = entry as Record<string, unknown>;
+    const role = e.role;
+    if (typeof role !== 'string' || !TRANSCRIPT_ROLES.has(role)) continue;
+    const body = text(e.text, MAX_TRANSCRIPT_TURN_CHARS);
+    if (!body) continue;
+    turns.push({ role, text: body });
+  }
+  return { ok: true, turns };
 }
 
 /** Discriminated on `ok` so the failure path narrows to a real string. */
@@ -74,6 +111,11 @@ function validate(body: unknown): Validation {
     return { ok: false, error: '`urgency` must be one of: critical, high, medium, low.' };
   }
 
+  const spoken = transcript(b.transcript);
+  if (!spoken.ok) {
+    return { ok: false, error: '`transcript` must be an array of turns.' };
+  }
+
   return {
     ok: true,
     payload: {
@@ -91,9 +133,12 @@ function validate(body: unknown): Validation {
       // Allowlisted rather than passed through, and narrower than the rest of
       // the body on purpose: `source` is free text the admin tooling reads, so
       // the browser must not be able to write an arbitrary string into the row.
-      // SOS is the one non-conversational caller that exists.
-      source: b.source === 'sos' ? 'sos' : 'ai-chat',
+      // SOS and the spoken intake are the non-conversational callers that exist.
+      // Anything unrecognised becomes `ai-chat` rather than an error, so a stale
+      // or hand-written client still files a working ticket.
+      source: typeof b.source === 'string' && SOURCES.has(b.source) ? b.source : 'ai-chat',
       session_id: text(b.session_id, 64) || 'anonymous',
+      transcript: spoken.turns,
       // Deliberately not read from the body: `validate` drops whatever the
       // caller sent. The value that decides ownership is the session address,
       // and it reaches the backend in the `x-ticket-owner` header set in `POST`
@@ -150,6 +195,13 @@ export async function POST(request: Request) {
 
   const result = validate(body);
   if (!result.ok) return badRequest(result.error);
+
+  // A transcript only survives on a ticket whose source says it was spoken, so
+  // the two cannot disagree. Not a security control — an allowlist is — but it
+  // stops a text ticket picking up a transcript attribute that later has to be
+  // explained in the admin queue, and it means the "you said this" record is
+  // only ever attached where a person actually spoke it.
+  if (result.payload.source !== 'voice') delete result.payload.transcript;
 
   // The one place the ticket's owner is decided.
   //

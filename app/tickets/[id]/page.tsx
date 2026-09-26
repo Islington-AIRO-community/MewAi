@@ -22,7 +22,8 @@ import {
 } from '@/components/assistant/ticket-status';
 import { PRIORITIES, SUPPORT_TYPE_LIST } from '@/lib/types';
 import { cn } from '@/lib/utils';
-import { useTicketConversation, type PortalMessage } from '@/lib/ticket-portal';
+import { useTicketConversation, useTicketTranscript, type PortalMessage } from '@/lib/ticket-portal';
+import { TicketTranscriptView } from '@/components/assistant/ticket-transcript';
 import { formatDateTime } from '@/lib/time';
 
 /**
@@ -47,6 +48,10 @@ export default function TicketPortalPage() {
   const id = Array.isArray(params?.id) ? params.id[0] : params?.id;
   const { ticket, messages, error, loading, sending, degraded, send } =
     useTicketConversation(id ?? '');
+  // Fetched separately and deliberately not awaited with the ticket: the page
+  // must render a reporter's ticket even when the transcript read is slow or
+  // briefly fails. A record of how the ticket was taken is not the ticket.
+  const transcript = useTicketTranscript(id ?? '');
 
   const [query, setQuery] = React.useState('');
   const listRef = React.useRef<HTMLUListElement>(null);
@@ -162,6 +167,24 @@ export default function TicketPortalPage() {
             mono
           />
         </dl>
+      </Card>
+
+      {/* Spoken intake. Placed above the conversation because it is the earlier
+          record: this is what was said to get the ticket filed, and the
+          conversation below is what has happened since. */}
+      <Card className="p-5 sm:p-6">
+        <TicketTranscriptView
+          turns={transcript.data ?? []}
+          loading={transcript.loading}
+          error={
+            transcript.error && transcript.error.kind !== 'not_signed_in'
+              ? transcript.error.kind === 'unavailable'
+                ? 'The ticket service is briefly down, so the transcript could not be loaded. Your ticket is unaffected.'
+                : 'The transcript of this call could not be loaded.'
+              : null
+          }
+          emptyHint="Everything you told us is in the details above."
+        />
       </Card>
 
       {/* Conversation. */}

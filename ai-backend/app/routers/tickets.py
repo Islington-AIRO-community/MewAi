@@ -30,6 +30,8 @@ from ..schemas import (
     TicketListResponse,
     TicketConversation,
     TicketStatus,
+    TicketTranscript,
+    TicketTranscriptTurn,
 )
 from ..slots import missing_slots, normalise_phone
 
@@ -145,12 +147,22 @@ async def create_ticket(payload: TicketCreate, request: Request) -> Ticket:
             owner,
         )
 
-    ticket = await store.insert(_clean(payload, owner=owner))
+    cleaned = _clean(payload, owner=owner)
+    # The *cleaned* transcript, not `payload.transcript`.
+    #
+    # `_clean` returns a copy with the turn text stripped, and passing the
+    # original alongside it meant the trimming was computed and then thrown
+    # away — a stored line that began with a space. Two objects for one payload
+    # is the smell; the cleanest fix is to clean once and use the result for both
+    # arguments, which is also what makes it impossible for the two to disagree
+    # about what is being written.
+    ticket = await store.insert(cleaned, cleaned.transcript)
     log.info(
-        "ticket %s created: %s / %s",
+        "ticket %s created: %s / %s%s",
         ticket.id,
         ",".join(s.value for s in ticket.support_needed),
         ticket.urgency.value,
+        f" / {len(cleaned.transcript)} transcript turns" if cleaned.transcript else "",
     )
     return ticket
 
@@ -360,6 +372,65 @@ async def post_message(
     return await _follow_up(request).reply(ticket, payload)
 
 
+@router.get(
+    "/{ticket_id}/transcript",
+    response_model=TicketTranscript,
+    summary="Read the spoken intake of a ticket you filed",
+)
+async def get_transcript(ticket_id: str, request: Request) -> TicketTranscript:
+    """
+    The recording-as-text of how this ticket was taken, for the reporter.
+
+    Owner-scoped exactly like `/{ticket_id}/messages`, and answering 404 rather
+    than 403 for the same reason: the ids are sequential, so "not yours" must not
+    be distinguishable from "no such ticket" or this endpoint is a scan of the
+    whole table.
+
+    An empty turn list is a 200, not a 404. A ticket filed by typing has no
+    transcript and that is not an error — the reporter asked to see what they
+    said, and "you typed it" is a real answer to that. 404 is reserved for a
+    ticket that is not theirs.
+    """
+    store = _store(request)
+    ticket = await store.get(ticket_id)
+    if ticket is None or not _owns(ticket, _request_owner(request)):
+        raise HTTPException(status_code=404, detail=f"No ticket with id {ticket_id}.")
+    return TicketTranscript(
+        ticket_id=ticket.id, turns=await store.transcript(ticket_id)
+    )
+
+
+@router.get(
+    "/{ticket_id}/transcript/admin",
+    response_model=TicketTranscript,
+    summary="Read the spoken intake of any ticket (admin)",
+)
+async def get_transcript_admin(ticket_id: str, request: Request) -> TicketTranscript:
+    """
+    The same transcript, for whoever is working the queue.
+
+    Admin-scoped by the caller, like `GET /tickets` and `PATCH /{id}/status`: the
+    proxy runs `requireAdmin()` server-side before this is reachable, and the
+    browser cannot address this service at all. The owner check is deliberately
+    *absent* — an operator is not the reporter and often has no account at all —
+    which is precisely why this is a separate route and not a flag on the
+    reporter one. Widening `/{ticket_id}/transcript` to allow admins instead would
+    have made "is an admin" a property of the request rather than of the route,
+    and the one thing worth keeping obvious about a transcript of someone's worst
+    day is who may ask for it.
+
+    Still 404 for a missing ticket, so this cannot be used to test which
+    references exist without the admin gate already in front of it.
+    """
+    store = _store(request)
+    ticket = await store.get(ticket_id)
+    if ticket is None:
+        raise HTTPException(status_code=404, detail=f"No ticket with id {ticket_id}.")
+    return TicketTranscript(
+        ticket_id=ticket.id, turns=await store.transcript(ticket_id)
+    )
+
+
 def _request_owner(request: Request) -> str | None:
     raw = request.headers.get(_OWNER_HEADER)
     if not raw:
@@ -406,5 +477,9 @@ def _clean(payload: TicketCreate, *, owner: str | None = None) -> TicketCreate:
             "location": payload.location.strip(),
             "notes": payload.notes.strip(),
             "owner_email": owner,
+            "transcript": [
+                turn.model_copy(update={"text": turn.text.strip()})
+                for turn in payload.transcript
+            ],
         }
     )

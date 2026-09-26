@@ -44,6 +44,21 @@ class Settings(BaseSettings):
     gemini_timeout_seconds: float = 30.0
     gemini_max_output_tokens: int = 1536
 
+    # ---- Gemini Live (voice) -------------------------------------------
+    # The voice model is separate from `gemini_models` on purpose: that list is
+    # walked in order as a *text* fallback chain, and every entry must speak
+    # `generateContent`. A Live model must answer `bidiGenerateContent` and has
+    # no text fallback at all, so a bad name here should fail loudly at
+    # handshake rather than silently fall through to a text model that cannot do
+    # the job. Verified available on the Dev API: `gemini-3.8-live`.
+    gemini_live_model: str = "gemini-3.8-live"
+    # Minutes, not days. A token is single-use regardless, but a short life
+    # limits the blast radius of one that is captured in transit.
+    live_token_ttl_seconds: int = 1800
+    # The WebSocket session itself. Short, because a session that is never
+    # established leaves a token that is useless.
+    live_session_ttl_seconds: int = 120
+
     # ---- Postgres -----------------------------------------------------
     database_url: str = Field(
         default="",

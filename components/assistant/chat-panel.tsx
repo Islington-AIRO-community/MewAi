@@ -9,7 +9,6 @@ import {
   Info,
   Loader2,
   Mic,
-  MicOff,
   PencilLine,
   Search,
   ShieldCheck,
@@ -142,8 +141,6 @@ export function ChatPanel({
   onSend,
   onConfirmCard,
   onDismissCard,
-  voiceState,
-  onToggleMic,
   className,
   autoFocusInput = true,
   showSearch = true,
@@ -155,8 +152,6 @@ export function ChatPanel({
   onSend: (text: string) => void;
   onConfirmCard: (card: ActionCard) => void;
   onDismissCard: (card: ActionCard) => void;
-  voiceState: 'idle' | 'listening' | 'thinking' | 'speaking' | 'muted' | 'connecting' | 'error';
-  onToggleMic: () => void;
   className?: string;
   autoFocusInput?: boolean;
   showSearch?: boolean;
@@ -245,7 +240,6 @@ export function ChatPanel({
   };
 
   const results = filtered ?? messages;
-  const micActive = voiceState === 'listening';
 
   return (
     <div className={cn('flex min-h-0 flex-1 flex-col', className)}>
@@ -304,7 +298,7 @@ export function ChatPanel({
               >
                 <p className="flex items-center gap-1.5 text-xs font-semibold text-navy-500">
                   <ShieldCheck className="size-3.5 text-relief-600" aria-hidden="true" />
-                  {messages.length} entries · session encrypted
+                  {messages.length} entries
                 </p>
                 <Button
                   variant="ghost"
@@ -492,48 +486,34 @@ export function ChatPanel({
             </p>
           )}
 
-          <div className="flex items-end gap-2">
+          <div className="relative min-w-0 flex-1">
+            <label htmlFor="relief-chat-input" className="sr-only">
+              Describe what you need
+            </label>
+            <textarea
+              id="relief-chat-input"
+              ref={inputRef}
+              rows={1}
+              value={draft}
+              onChange={autoGrow}
+              onKeyDown={onKeyDown}
+              placeholder="Describe what you need — e.g. “two people trapped in a basement”"
+              aria-describedby="relief-chat-help"
+              className={cn(
+                'max-h-40 min-h-[52px] w-full resize-none rounded-xl border border-navy-200 bg-white py-3.5 pl-4 pr-12 text-[15px] leading-relaxed text-navy-800',
+                'placeholder:text-navy-400',
+                'focus-visible:outline-none focus-visible:border-dispatch-500 focus-visible:ring-2 focus-visible:ring-dispatch-600/30',
+              )}
+            />
             <Button
-              type="button"
-              variant={micActive ? 'accent' : 'outline'}
-              size="iconLg"
-              onClick={onToggleMic}
-              aria-pressed={micActive}
-              srLabel={micActive ? 'Mute microphone' : 'Unmute microphone'}
-              className="shrink-0"
+              type="submit"
+              size="icon"
+              disabled={!draft.trim() || waiting}
+              className="absolute bottom-2.5 right-2.5"
+              srLabel="Send message"
             >
-              {micActive ? <MicOff aria-hidden="true" /> : <Mic aria-hidden="true" />}
+              <ArrowUp aria-hidden="true" />
             </Button>
-
-            <div className="relative min-w-0 flex-1">
-              <label htmlFor="relief-chat-input" className="sr-only">
-                Describe what you need
-              </label>
-              <textarea
-                id="relief-chat-input"
-                ref={inputRef}
-                rows={1}
-                value={draft}
-                onChange={autoGrow}
-                onKeyDown={onKeyDown}
-                placeholder="Describe what you need — e.g. “two people trapped in a basement”"
-                aria-describedby="relief-chat-help"
-                className={cn(
-                  'max-h-40 min-h-[52px] w-full resize-none rounded-xl border border-navy-200 bg-white py-3.5 pl-4 pr-12 text-[15px] leading-relaxed text-navy-800',
-                  'placeholder:text-navy-400',
-                  'focus-visible:outline-none focus-visible:border-dispatch-500 focus-visible:ring-2 focus-visible:ring-dispatch-600/30',
-                )}
-              />
-              <Button
-                type="submit"
-                size="icon"
-                disabled={!draft.trim() || waiting}
-                className="absolute bottom-2.5 right-2.5"
-                srLabel="Send message"
-              >
-                <ArrowUp aria-hidden="true" />
-              </Button>
-            </div>
           </div>
 
           <div
@@ -546,15 +526,6 @@ export function ChatPanel({
                 Enter to send · Shift + Enter for a new line
               </span>
             </p>
-            {micActive && (
-              <Badge tone="emergency" size="xs" className="shrink-0">
-                <span className="relative flex size-1.5">
-                  <span className="absolute inset-0 animate-pulse-ring rounded-full bg-current" />
-                  <span className="relative size-1.5 rounded-full bg-current" />
-                </span>
-                Listening
-              </Badge>
-            )}
           </div>
         </form>
       )}

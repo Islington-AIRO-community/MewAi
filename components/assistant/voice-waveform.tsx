@@ -11,9 +11,18 @@ const BAR_COUNT = 32;
 /**
  * Audio-reactive waveform.
  *
- * In a live build this is fed by an AnalyserNode. Here it is driven by a
- * deterministic pseudo-random envelope so the motion is calm and stable
- * rather than frantic — the visual language is "steady, present, calm".
+ * Fed a real microphone level when there is a live session to read one from, and
+ * otherwise driven by a deterministic pseudo-random envelope — the visual
+ * language is "steady, present, calm" either way, but only one of them is
+ * pretending.
+ *
+ * The split is per-state rather than global. `listening` is the only state where
+ * the level is *about* the reporter's voice, so that is the only state where a
+ * real number is shown: the bars then move because someone actually spoke, and
+ * sit still when they did not. For `speaking` there is no analyser on the output
+ * path, so the synthetic envelope stands in — and that is the one case where a
+ * synthetic display is defensible, because it is depicting the model's own
+ * speech, which the session is already streaming.
  *
  * When the user prefers reduced motion, bars settle into a static,
  * state-appropriate silhouette instead of animating.
@@ -23,12 +32,18 @@ export function VoiceWaveform({
   className,
   bars = BAR_COUNT,
   amplitude = 1,
+  level,
 }: {
   state: VoiceState;
   className?: string;
   bars?: number;
   /** Scales the whole envelope; used for the compact launcher orb. */
   amplitude?: number;
+  /**
+   * Real input RMS in 0..1, polled from the session's `AnalyserNode`. Omit when
+   * there is no live session — the text-only launcher orb does.
+   */
+  level?: number;
 }) {
   const reduced = usePrefersReducedMotion();
   const [levels, setLevels] = React.useState<number[]>(() =>
@@ -38,6 +53,12 @@ export function VoiceWaveform({
   const active = state === 'listening' || state === 'speaking';
   const rafRef = React.useRef<number | null>(null);
   const tRef = React.useRef(0);
+
+  // Read inside the animation loop, so a level arriving twice a second does not
+  // tear down and rebuild the loop on every frame.
+  const levelRef = React.useRef(level);
+  levelRef.current = level;
+  const live = state === 'listening' && level !== undefined;
 
   React.useEffect(() => {
     if (!active || reduced) {
@@ -49,15 +70,25 @@ export function VoiceWaveform({
     const tick = () => {
       tRef.current += 0.055;
       const next = Array.from({ length: bars }, (_, i) => {
+        // Taper the edges so it reads as a waveform, not a bar chart.
+        const taper = Math.sin((i / (bars - 1)) * Math.PI) ** 0.7;
+
+        if (live) {
+          // Real audio. A slow settle toward the measured level keeps it from
+          // flickering on every frame, and the shape comes from the spatial
+          // envelope alone — there is no per-bin data to draw, only a scalar.
+          const target = (levelRef.current ?? 0) * 2.1 * amplitude;
+          const drift = 0.06 * Math.sin(tRef.current * 1.3 + i * 0.4);
+          return Math.max(0.08, Math.min(1, (target * taper + drift) || 0.08));
+        }
+
         // Layered sines + envelope gives an organic, speech-like rhythm.
         const base =
           0.34 +
           0.3 * Math.abs(Math.sin(tRef.current + i * 0.36)) +
           0.2 * Math.abs(Math.sin(tRef.current * 1.7 - i * 0.22)) +
           0.1 * Math.abs(Math.cos(tRef.current * 2.6 + i * 0.5));
-        // Taper the edges so it reads as a waveform, not a bar chart.
-        const taper = Math.sin((i / (bars - 1)) * Math.PI) ** 0.7;
-        return Math.max(0.1, Math.min(1, base * taper));
+        return Math.max(0.1, Math.min(1, base * taper * amplitude));
       });
       setLevels(next);
       rafRef.current = requestAnimationFrame(tick);
@@ -66,7 +97,7 @@ export function VoiceWaveform({
     return () => {
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
-  }, [active, reduced, bars]);
+  }, [active, reduced, bars, amplitude, live]);
 
   const colorFor = (level: number) => {
     if (!active) return 'bg-navy-200';

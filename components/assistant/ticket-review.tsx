@@ -8,6 +8,7 @@ import {
   ArrowLeft,
   Check,
   CheckCircle2,
+  ChevronDown,
   ClipboardCheck,
   Info,
   Loader2,
@@ -195,6 +196,15 @@ function TicketForm({ state, className }: { state: AiChatApi; className?: string
         </div>
 
         <OnBehalfToggle state={state} />
+
+        {/* The voice transcript, disclosed before it is stored.
+            Not a setting buried in a settings page: this is the last screen
+            before the words become a row in a database that responders and the
+            reporter can both read, so the choice is made here, with the
+            transcript itself visible, rather than discovered afterwards. */}
+        {state.viaVoice && state.voiceTranscript.length > 0 && (
+          <VoiceTranscriptDisclosure state={state} />
+        )}
       </div>
 
       <footer className="safe-bottom border-t border-navy-100 bg-navy-50/70 px-4 py-3">
@@ -252,6 +262,107 @@ const inputClass = cn(
   'placeholder:text-navy-300',
   'focus-visible:outline-none focus-visible:border-dispatch-500 focus-visible:ring-2 focus-visible:ring-dispatch-600/30',
 );
+
+/* ------------------------------------------------------------------ *
+ * Voice transcript disclosure
+ * ------------------------------------------------------------------ */
+
+/**
+ * What was said, and whether to keep it.
+ *
+ * Two decisions live here. First, the choice: the transcript is stored by
+ * default, because a responder reading a phone number that was misheard has
+ * nothing to work from otherwise, and the reporter can turn it off. Second, the
+ * text: the turns are shown, not just counted, because "save this transcript"
+ * is a different promise when you have read what is in it — and a misheard
+ * number is the one thing a reporter might still catch here, in a way they cannot
+ * catch it after submit.
+ *
+ * The opt-out is a real choice, not a dead control: unchecking sends no
+ * transcript, and the backend then stores a `voice` ticket with no turns, which
+ * renders as "you typed this in" everywhere it is read. That is a small lie and
+ * it is deliberate — the alternative is a "no transcript" state threaded through
+ * both readers for something that is indistinguishable from a typed ticket.
+ */
+function VoiceTranscriptDisclosure({ state }: { state: AiChatApi }) {
+  const [open, setOpen] = React.useState(false);
+  const turns = state.voiceTranscript;
+
+  return (
+    <div className="rounded-xl bg-dispatch-50/60 p-3 ring-1 ring-inset ring-dispatch-200">
+      <div className="flex items-start gap-2.5">
+        <input
+          type="checkbox"
+          id="save-voice-transcript"
+          checked={state.saveVoiceTranscript}
+          onChange={(e) => state.setSaveVoiceTranscript(e.target.checked)}
+          className="mt-0.5 size-4 shrink-0 rounded border-navy-300 accent-dispatch-600"
+        />
+        <div className="min-w-0 flex-1">
+          <label
+            htmlFor="save-voice-transcript"
+            className="block text-xs font-bold text-navy-800"
+          >
+            Save what you said with this ticket
+          </label>
+          <p className="mt-1 text-2xs leading-relaxed text-navy-600">
+            {state.saveVoiceTranscript ? (
+              <>
+                The <span className="nums font-semibold">{turns.length}</span> spoken
+                messages will be stored on the ticket. You can read them again from your
+                ticket, and a responder working your case can too.
+              </>
+            ) : (
+              <>
+                Only the details above will be stored. The spoken messages will be
+                discarded when you submit.
+              </>
+            )}
+          </p>
+        </div>
+      </div>
+
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="mt-2 flex min-h-11 w-full items-center justify-between rounded-lg px-2 text-2xs font-bold uppercase tracking-[0.08em] text-dispatch-700 hover:bg-dispatch-100/60"
+      >
+        {open ? 'Hide the transcript' : 'Read the transcript'}
+        <ChevronDown
+          aria-hidden="true"
+          className={cn('size-4 transition-transform', open && 'rotate-180')}
+        />
+      </button>
+
+      {open && (
+        <ol className="mt-1 max-h-64 space-y-2 overflow-y-auto overscroll-contain">
+          {turns.map((turn, i) => (
+            <li
+              // Re-renders on every transcription chunk, so the index is the
+              // only stable identity here and the key must not be the text.
+              key={i}
+              className={cn(
+                'rounded-lg px-2.5 py-2 text-xs leading-relaxed',
+                turn.role === 'reporter'
+                  ? 'bg-white text-navy-800 ring-1 ring-inset ring-navy-200'
+                  : 'bg-dispatch-100/70 text-navy-700',
+              )}
+            >
+              <span className="sr-only">
+                {turn.role === 'reporter' ? 'You said: ' : 'Assistant said: '}
+              </span>
+              <span aria-hidden="true" className="font-bold">
+                {turn.role === 'reporter' ? 'You' : 'Assistant'}
+              </span>{' '}
+              {turn.text}
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+}
 
 /** Label plus its required/optional marker and a hint on hover. */
 function FieldHeader({

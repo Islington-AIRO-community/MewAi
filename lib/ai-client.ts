@@ -291,10 +291,25 @@ export interface CreateTicketInput {
    * string into the row.
    */
   source?: TicketSource;
+  /**
+   * The spoken intake, if the ticket was taken over the phone.
+   *
+   * Sent with the ticket rather than in a follow-up call because there is no id
+   * to attach it to before the ticket exists, and because a ticket that records
+   * what was asked but not what was said is the worse of the two failures. The
+   * backend writes both in one transaction, so this is all-or-nothing.
+   *
+   * Ignored unless `source` is `'voice'` — the proxy drops it otherwise, so a
+   * text ticket cannot pick up a transcript attribute nobody can explain.
+   * `seq` is not sent: the backend renumbers the turns in the order given, and
+   * two turns sharing a `seq` would collide on a primary key and fail the
+   * insert along with the ticket.
+   */
+  transcript?: { role: 'reporter' | 'assistant'; text: string }[];
 }
 
-/** The only two values the proxy will accept. */
-export type TicketSource = 'ai-chat' | 'sos';
+/** The only values the proxy will accept. */
+export type TicketSource = 'ai-chat' | 'sos' | 'voice';
 
 export function createTicket(input: CreateTicketInput): Promise<StoredTicket> {
   return postJson<StoredTicket>('/api/ai/tickets', input);

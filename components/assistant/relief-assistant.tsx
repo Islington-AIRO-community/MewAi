@@ -11,16 +11,15 @@ import {
   Sparkles,
   X,
 } from 'lucide-react';
-import type { ActionCard, VoiceState } from '@/lib/types';
+import type { ActionCard } from '@/lib/types';
 import { cn, truncate } from '@/lib/utils';
 import { useApp } from '@/lib/store';
 import type { AiChatApi } from '@/lib/use-ai-chat';
 import { usePrefersReducedMotion } from '@/lib/hooks';
 import { Button } from '@/components/ui/button';
 import { TabList, TabPanel, TabsProvider } from '@/components/ui/tabs';
-import { VoiceOrb } from './voice-waveform';
 import { ChatPanel } from './chat-panel';
-import { VoicePanel } from './voice-panel';
+import { LiveVoice } from './live-voice';
 
 type Mode = 'chat' | 'voice';
 
@@ -65,22 +64,10 @@ export function ReliefAssistant({
 
   const [open, setOpen] = React.useState(defaultOpen);
   const [mode, setMode] = React.useState<Mode>(defaultMode);
-  const [voiceState, setVoiceState] = React.useState<VoiceState>('idle');
-  const [handsFree, setHandsFree] = React.useState(false);
-  const [transcript, setTranscript] = React.useState('');
   const [hasUnread, setHasUnread] = React.useState(true);
   const [expanded, setExpanded] = React.useState(false);
   const panelRef = React.useRef<HTMLDivElement>(null);
   const closeRef = React.useRef<HTMLButtonElement>(null);
-
-  // Always the latest `ai.send`. The voice loop below schedules work with
-  // `setTimeout` and a typing interval, and those callbacks capture the render
-  // that started them — so they read the current function through this ref
-  // rather than a binding from a possibly long-past render. It is deliberately
-  // not an effect dep: `ai.send` changes identity on every draft edit, and
-  // depending on it would restart the voice loop mid-conversation.
-  const sendRef = React.useRef(ai.send);
-  sendRef.current = ai.send;
 
   const isFullscreen = variant === 'fullscreen';
   const show = isFullscreen ? true : open;
@@ -145,87 +132,21 @@ export function ReliefAssistant({
     return () => document.removeEventListener('keydown', onKey);
   }, [open, isFullscreen]);
 
-  /* ---------------- Voice simulation ---------------- */
-
-  const startVoice = React.useCallback(() => {
-    setVoiceState('connecting');
-    window.setTimeout(() => setVoiceState('listening'), 700);
-  }, []);
-
-  const stopVoice = React.useCallback(() => {
-    setVoiceState('idle');
-    setTranscript('');
-  }, []);
-
-  const toggleMic = React.useCallback(() => {
-    setVoiceState((prev) => {
-      if (prev === 'muted') return 'listening';
-      if (prev === 'listening' || prev === 'speaking' || prev === 'thinking') {
-        setTranscript('');
-        return 'muted';
-      }
-      // idle / error -> start a fresh session
-      setTimeout(() => setVoiceState('listening'), 400);
-      return 'connecting';
-    });
-  }, []);
-
-  // Simulated turn-taking so the voice UI demonstrates every state.
-  //
-  // These lines are typed *and sent* — `sendRef.current` puts them through the
-  // real intake — so they used the Fairmount Apartments scenario from the seed
-  // that has since been removed, which meant switching to the voice tab quietly
-  // filed a ticket for an incident the reporter never described. The specifics
-  // are now generic: the demo still walks every state, but it no longer invents
-  // an address, a household or an injury and feeds them to the model.
-  React.useEffect(() => {
-    if (voiceState !== 'listening') return;
-    const lines = [
-      'There are three of us in the building',
-      'The water is coming up fast and my partner cannot walk',
-      'We are on the east side of the city',
-    ];
-    let i = 0;
-    const typeNext = () => {
-      const line = lines[i % lines.length];
-      let c = 0;
-      setTranscript('');
-      const type = window.setInterval(() => {
-        c += 3;
-        setTranscript(line.slice(0, c));
-        if (c >= line.length) {
-          window.clearInterval(type);
-          i += 1;
-          if (i === 1) {
-            window.setTimeout(() => {
-              setVoiceState('thinking');
-              window.setTimeout(() => setVoiceState('speaking'), 900);
-            }, 500);
-          } else {
-            window.setTimeout(() => {
-              setVoiceState('speaking');
-              // Spoken turns are real turns, so they go through the intake
-              // rather than the scripted path. Read from a ref because
-              // `ai.send` changes identity on every draft edit and putting it
-              // in this effect's deps would restart the loop mid-conversation.
-              sendRef.current(line, { viaVoice: true });
-            }, 600);
-          }
-        }
-      }, 26);
-    };
-    typeNext();
-  }, [voiceState]);
-
-  // Return to listening after the assistant finishes speaking.
-  React.useEffect(() => {
-    if (voiceState !== 'speaking') return;
-    const t = window.setTimeout(() => {
-      setTranscript('');
-      setVoiceState('listening');
-    }, 2600);
-    return () => window.clearTimeout(t);
-  }, [voiceState]);
+  /**
+   * The call is owned entirely by `LiveVoice` now.
+   *
+   * What used to live here was a simulation: a `setTimeout` chain that walked
+   * the state machine through connecting → listening → thinking → speaking, typed
+   * three scripted lines into a fake transcript, and sent them through the real
+   * intake. Every state the panel could display was therefore demonstrated by a
+   * timer rather than by anything that happened, and the timings were chosen to
+   * look right — which is precisely why it was worth removing. A voice UI whose
+   * latency and turn-taking are theatre teaches people to wait for a response
+   * that is never coming, and during an emergency that costs time.
+   *
+   * The only thing left here is knowing when to get out of the way, which is
+   * `TabPanel` unmounting the panel.
+   */
 
   const handleSend = React.useCallback(
     (text: string) => {
@@ -335,27 +256,27 @@ export function ReliefAssistant({
         )}
       </div>
 
-      {/* Mode switcher */}
-      <div className="mt-3">
-        <TabList
-          label="Assistant mode"
-          items={[
-            { id: 'chat', label: 'Text chat', icon: MessageSquareText },
-            { id: 'voice', label: 'Live voice', icon: Mic },
-          ]}
-        />
-      </div>
+      {/* Mode switcher — fullscreen only.
+          The floating launcher is text-only by design, so it does not get a
+          one-item tab list: a switcher with nothing to switch to is worse than
+          no switcher. */}
+      {isFullscreen && (
+        <div className="mt-3">
+          <TabList
+            label="Assistant mode"
+            items={[
+              { id: 'chat', label: 'Text chat', icon: MessageSquareText },
+              { id: 'voice', label: 'Live voice', icon: Mic },
+            ]}
+          />
+        </div>
+      )}
     </div>
   );
 
-  const handleModeChange = React.useCallback(
-    (v: string) => {
-      setMode(v as Mode);
-      if (v === 'voice' && voiceState === 'idle') startVoice();
-      if (v === 'chat') stopVoice();
-    },
-    [voiceState, startVoice, stopVoice],
-  );
+  const handleModeChange = React.useCallback((v: string) => {
+    setMode(v as Mode);
+  }, []);
 
   const body = (
     <>
@@ -367,28 +288,14 @@ export function ReliefAssistant({
           onSend={handleSend}
           onConfirmCard={handleConfirm}
           onDismissCard={handleDismiss}
-          voiceState={voiceState}
-          onToggleMic={toggleMic}
           ai={ai}
         />
       </TabPanel>
 
+      {/* Mounted only while its tab is active — `TabPanel` returns null
+          otherwise, so this is also what releases the microphone. */}
       <TabPanel value="voice" className="flex min-h-0 flex-1 flex-col">
-        <VoicePanel
-          state={voiceState}
-          transcript={transcript}
-          handsFree={handsFree}
-          onToggleMic={toggleMic}
-          onToggleHandsFree={() => setHandsFree((v) => !v)}
-          onStop={() => {
-            stopVoice();
-            setMode('chat');
-          }}
-          onSwitchToText={() => {
-            stopVoice();
-            setMode('chat');
-          }}
-        />
+        <LiveVoice ai={ai} onEnd={() => setMode('chat')} />
       </TabPanel>
     </>
   );
@@ -433,7 +340,12 @@ export function ReliefAssistant({
               'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dispatch-600 focus-visible:ring-offset-2',
             )}
           >
-            <VoiceOrb state={voiceState === 'idle' ? 'idle' : voiceState} size={56} />
+            {/* A sparkle, not a waveform orb.
+                The orb animated as though it were listening, and this launcher has
+                no microphone behind it: the floating assistant is text-only. A
+                voice affordance on a button that cannot do voice is a promise the
+                thing does not keep. */}
+            <Sparkles className="size-6" aria-hidden="true" />
             {hasUnread && (
               <span
                 className="absolute -right-0.5 -top-0.5 size-3.5 rounded-full bg-emergency-500 ring-[3px] ring-white"

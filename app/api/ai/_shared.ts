@@ -45,6 +45,21 @@ export function backendUnreachable(error: unknown): NextResponse {
   );
 }
 
+/**
+ * Upstream refused, rather than failed to answer.
+ *
+ * Used by the live-token route so a Gemini-side refusal (bad key, model not
+ * enabled) is not reported as a transport failure. Keeping the two apart is the
+ * same discipline as the 502/503 split: the caller can tell "we could not reach
+ * it" from "it said no".
+ */
+export function backendRefused(message: string, detail?: unknown): NextResponse {
+  return NextResponse.json(
+    { error: message, detail: detail ?? null, code: 'backend_refused' },
+    { status: 502 },
+  );
+}
+
 export function badRequest(message: string, detail?: unknown): NextResponse {
   return NextResponse.json(
     { error: message, detail: detail ?? null },

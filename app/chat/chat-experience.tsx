@@ -93,12 +93,12 @@ export function ChatExperience() {
                   d: 'In your own words, by voice or text. No forms, no jargon.',
                 },
                 {
-                  t: 'FLARE extracts the details',
-                  d: 'People affected, injuries, hazards and urgency — each with a confidence score.',
+                  t: 'FLARE writes the details down',
+                  d: 'Name, phone number, where you are, what you need, how urgent.',
                 },
                 {
-                  t: 'You confirm before dispatch',
-                  d: 'Nothing is sent until you press “Confirm & dispatch”.',
+                  t: 'You check it before it is sent',
+                  d: 'You read every field and correct anything wrong, then press “Submit ticket”.',
                 },
                 {
                   t: 'You track it live',
@@ -147,11 +147,12 @@ export function ChatExperience() {
             </p>
             <p className="flex items-center gap-2 text-2xs text-navy-400">
               <Mic className="size-3.5" aria-hidden="true" />
-              Voice mode works hands-free on supported phones
+              Voice mode talks to Google directly, so your audio never touches our
+              servers
             </p>
             <p className="flex items-center gap-2 text-2xs text-navy-400">
               <Info className="size-3.5" aria-hidden="true" />
-              This is a demo. No real messages leave your device.
+              This conversation is sent to our AI service to work out what you need
             </p>
           </div>
         </aside>

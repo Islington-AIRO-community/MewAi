@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -163,6 +164,43 @@ class ChatResponse(BaseModel):
 # ---------------------------------------------------------------------- #
 
 
+class TicketTranscriptTurn(BaseModel):
+    """
+    One turn of a spoken intake, as transcribed by the Live session.
+
+    `role` is the speaker: `reporter` or `assistant`. Deliberately *not* `user` —
+    the follow-up table uses `user`/`assistant`, and sharing those values across
+    two tables is how a spoken line ends up rendered as "Assistant" in a prompt.
+    This table is never read by the follow-up path, and the distinct vocabulary is
+    the second thing keeping it that way.
+    """
+
+    # Defaulted, and the default is never load-bearing: `_sequence_transcript`
+    # below overwrites every value. This is what lets the wire format be just
+    # `{role, text}` — the Next proxy forwards the browser's turns verbatim and
+    # has no business inventing ordinals it did not observe. When this was
+    # required, every real voice submission failed validation on a field the
+    # client had no way to know it was supposed to send.
+    seq: int = Field(default=0, ge=0)
+    role: Literal["reporter", "assistant"]
+    text: str = Field(min_length=1, max_length=2000)
+
+    @field_validator("text")
+    @classmethod
+    def _not_blank(cls, value: str) -> str:
+        """
+        Reject a turn that is only whitespace.
+
+        `min_length=1` does not do this: a streaming transcription fragment can
+        arrive as `" "` between words, and it satisfies a length check. Without
+        this, a blank line lands in the record of someone's call and both readers
+        render it as something they were told.
+        """
+        if not value.strip():
+            raise ValueError("A transcript turn must contain something.")
+        return value
+
+
 class TicketCreate(BaseModel):
     """What the review form submits. Validated, not trusted."""
 
@@ -180,6 +218,11 @@ class TicketCreate(BaseModel):
     source: str = Field(default="ai-chat", max_length=32)
     session_id: str | None = Field(default=None, max_length=64)
     owner_email: str | None = Field(default=None, max_length=254)
+    # The spoken intake, when there was one. Written in the same transaction as
+    # the ticket, so a filed ticket never exists without the record of how it was
+    # taken. Bounded here rather than in the router so an over-long batch is a
+    # validation error at the edge.
+    transcript: list[TicketTranscriptTurn] = Field(default_factory=list, max_length=60)
 
     @field_validator("people_affected", mode="before")
     @classmethod
@@ -190,6 +233,22 @@ class TicketCreate(BaseModel):
             digits = "".join(ch for ch in v if ch.isdigit())
             return int(digits) if digits else None
         return v
+
+    @field_validator("transcript")
+    @classmethod
+    def _sequence_transcript(cls, turns: list[TicketTranscriptTurn]) -> list[TicketTranscriptTurn]:
+        """
+        Renumber the turns into `seq` order as given.
+
+        The browser owns the order — it watched the call happen — so it is
+        trusted on ordering and the numbers are derived here. Two turns arriving
+        with the same `seq` would collide on the primary key and fail the whole
+        insert, taking the ticket with it, so this is the one thing about the
+        transcript that is normalised rather than accepted.
+        """
+        for index, turn in enumerate(turns):
+            turn.seq = index
+        return turns
 
     def validation_errors(self) -> list[str]:
         """
@@ -279,6 +338,19 @@ class TicketConversation(BaseModel):
     messages: list[TicketMessage]
 
 
+class TicketTranscript(BaseModel):
+    """
+    A ticket's spoken intake, in the order it was spoken.
+
+    `turns` is empty for a ticket that was typed. That is a normal answer, not a
+    missing row, and callers should render it as "you typed this in" rather than
+    as an error.
+    """
+
+    ticket_id: str
+    turns: list[TicketTranscriptTurn]
+
+
 class FollowUpRequest(BaseModel):
     """A reporter's follow-up question about a ticket they already filed."""
 
@@ -303,3 +375,25 @@ class FollowUpResponse(BaseModel):
     degraded: bool
     model: str
     safety_note: str = ""
+
+
+# ---------------------------------------------------------------------- #
+# Live voice
+# ---------------------------------------------------------------------- #
+
+
+class LiveSessionResponse(BaseModel):
+    """
+    One short-lived Gemini Live credential, for the browser to open a WebSocket
+    with.
+
+    Everything needed to connect, and nothing that outlives the session: the
+    token is single-use, so this payload is safe to hand to a browser that is
+    about to speak to a stranger during a flood. It is *not* the API key and
+    never becomes it — there is no endpoint here that can widen a token.
+    """
+
+    token: str
+    expires_at: datetime
+    model: str
+    ws_url: str

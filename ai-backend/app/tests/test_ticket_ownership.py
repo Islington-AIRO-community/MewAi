@@ -218,9 +218,14 @@ class RecordingStore(FakeStore):
     def __init__(self) -> None:
         super().__init__(None)
         self.inserted = None
+        self.inserted_transcript = None
 
-    async def insert(self, payload):
+    async def insert(self, payload, transcript=()):
+        # Mirrors `TicketStore.insert`. The second argument is the transcript, and
+        # a double that dropped it would have let a router passing the wrong thing
+        # pass every ownership test while never writing a transcript at all.
         self.inserted = payload
+        self.inserted_transcript = transcript
         return make_ticket(owner_email=payload.owner_email)
 
 

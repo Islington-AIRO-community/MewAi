@@ -18,6 +18,7 @@ Design notes:
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
 from datetime import datetime, timezone
 
 import asyncpg
@@ -28,6 +29,7 @@ from .schemas import (
     TicketCreate,
     TicketMessage,
     TicketStatus,
+    TicketTranscriptTurn,
     Urgency,
 )
 
@@ -74,6 +76,30 @@ CREATE TABLE IF NOT EXISTS ticket_messages (
     created_at          timestamptz        NOT NULL DEFAULT now()
 );
 
+-- The spoken intake, for a ticket that was taken over the phone.
+--
+-- A separate table rather than a `channel` column on `ticket_messages`, and the
+-- reason is that the two must never mix. `messages()` reads a single global
+-- 200-row window ordered by id, so a long call would push a reporter's follow-up
+-- history out of the thread the follow-up prompt is built from. Worse, that
+-- prompt renders any non-`user` row as the literal label "Assistant"
+-- (`follow_up_prompts.py`), so a transcript leaking in there would both confuse
+-- the model and hand it the reporter's spoken name and phone number — the exact
+-- leak `_ticket_facts` is built to avoid.
+--
+-- So this is a distinct resource with a distinct reader. `seq` rather than
+-- `bigserial` because order is the caller's concern here: turns are written in
+-- one batch with the order the Live session produced them, and a global sequence
+-- would interleave them with anything else written in the same instant.
+CREATE TABLE IF NOT EXISTS ticket_transcripts (
+    ticket_id           text               NOT NULL REFERENCES relief_tickets (id) ON DELETE CASCADE,
+    seq                 integer            NOT NULL,
+    role                text               NOT NULL,
+    text                text               NOT NULL,
+    created_at          timestamptz        NOT NULL DEFAULT now(),
+    PRIMARY KEY (ticket_id, seq)
+);
+
 CREATE INDEX IF NOT EXISTS relief_tickets_created_at_idx
     ON relief_tickets (created_at DESC);
 CREATE INDEX IF NOT EXISTS relief_tickets_status_idx
@@ -98,6 +124,14 @@ _COLUMNS = """
     support_needed, urgency, on_behalf_of_other, notes, source, session_id,
     owner_email
 """
+
+_TRANSCRIPT_COLUMNS = "ticket_id, seq, role, text, created_at"
+
+# A transcript is capped at the schema, not at the query, so an over-long batch
+# is rejected where it is submitted rather than silently truncated at the tail —
+# the end of a call is where the location and the phone number are.
+MAX_TRANSCRIPT_TURNS = 60
+MAX_TRANSCRIPT_TURN_CHARS = 2000
 
 
 class TicketStore:
@@ -142,12 +176,21 @@ class TicketStore:
 
     # ---- writes ------------------------------------------------------- #
 
-    async def insert(self, payload: TicketCreate) -> Ticket:
+    async def insert(
+        self, payload: TicketCreate, transcript: Sequence[TicketTranscriptTurn] = ()
+    ) -> Ticket:
         """
         Insert a ticket and return it, with the server-stamped timestamps.
 
         `created_at` / `updated_at` come from `now()` on the database clock, not
         from the request and not from the model — attribute 4 of the spec.
+
+        `transcript` is written in the *same* transaction as the ticket. That is
+        the whole point: a reporter who speaks their way through intake and gets
+        a durable ticket must not be able to end up with the ticket but not the
+        record of what they said, because a second write failed. The alternative —
+        a follow-up request after the insert — also has nowhere to live before a
+        ticket id exists, which is why the browser buffers and sends it here.
         """
         pool = self._require_pool()
         # Sequence in the FLARE-* id space, allocated from the same counter the
@@ -184,7 +227,58 @@ class TicketStore:
                     payload.session_id,
                     _clean_email(payload.owner_email),
                 )
+                await self._write_transcript(conn, row["id"], transcript)
         return _to_ticket(row)
+
+    async def _write_transcript(
+        self,
+        conn: asyncpg.Connection,
+        ticket_id: str,
+        turns: Sequence[TicketTranscriptTurn],
+    ) -> None:
+        """
+        Write the spoken turns, in order, inside the caller's transaction.
+
+        Takes the connection rather than the pool precisely so it joins the
+        ticket's transaction instead of racing it. A turn whose text is empty
+        after stripping is dropped: a partial transcription fragment is not a
+        thing a reporter said, and storing it would put blank lines in the record.
+        """
+        rows = [
+            (ticket_id, index, turn.role, turn.text.strip())
+            for index, turn in enumerate(turns)
+            if turn.text.strip()
+        ]
+        if not rows:
+            return
+        await conn.executemany(
+            f"""
+            INSERT INTO ticket_transcripts ({_TRANSCRIPT_COLUMNS})
+            VALUES ($1, $2, $3, $4, now())
+            ON CONFLICT (ticket_id, seq) DO NOTHING
+            """,
+            rows,
+        )
+
+    async def transcript(self, ticket_id: str) -> list[TicketTranscriptTurn]:
+        """
+        The spoken intake, oldest first.
+
+        Not bounded the way `messages()` is. This is a record of one call, not a
+        rolling window: truncating it would silently drop the oldest part of
+        someone's account of an emergency, which is the part least likely to be
+        redundant.
+        """
+        pool = self._require_pool()
+        rows = await pool.fetch(
+            f"""
+            SELECT {_TRANSCRIPT_COLUMNS} FROM ticket_transcripts
+            WHERE ticket_id = $1
+            ORDER BY seq ASC
+            """,
+            ticket_id,
+        )
+        return [_to_transcript_turn(row) for row in rows]
 
     async def update_status(self, ticket_id: str, status: TicketStatus) -> Ticket | None:
         """
@@ -405,6 +499,16 @@ def _to_message(row: asyncpg.Record) -> TicketMessage:
     return TicketMessage(
         id=int(row["id"]),
         ticket_id=row["ticket_id"],
+        role=row["role"],
+        text=row["text"],
+        created_at=_as_utc(row["created_at"]),
+    )
+
+
+def _to_transcript_turn(row: asyncpg.Record) -> TicketTranscriptTurn:
+    return TicketTranscriptTurn(
+        ticket_id=row["ticket_id"],
+        seq=int(row["seq"]),
         role=row["role"],
         text=row["text"],
         created_at=_as_utc(row["created_at"]),

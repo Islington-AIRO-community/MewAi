@@ -180,6 +180,51 @@ export function claimTicket(
   });
 }
 
+/**
+ * One turn of a spoken intake.
+ *
+ * `role` is `reporter` / `assistant`, deliberately not the `user` / `assistant`
+ * of the follow-up table. The two are different resources and the vocabularies
+ * are kept apart on purpose — see the `ticket_transcripts` DDL note in
+ * `ai-backend/app/db.py` for what mixing them would do to a follow-up prompt.
+ */
+export interface TranscriptTurn {
+  seq: number;
+  role: 'reporter' | 'assistant';
+  text: string;
+  created_at: string;
+}
+
+/**
+ * The spoken intake of a ticket, as the two readers see it.
+ *
+ * `turns: []` is a real answer — the ticket was typed rather than spoken — so
+ * callers must render that as a fact and not as a failure. Only
+ * `PortalError.not_found` means the ticket is not theirs, and 404 is also what a
+ * missing id gives, so the two are not distinguishable by design.
+ */
+export interface TicketTranscript {
+  ticket_id: string;
+  turns: TranscriptTurn[];
+}
+
+/** The reporter's own copy. 401 without a session, 404 for someone else's. */
+export function fetchTranscript(id: string): Promise<PortalResult<TicketTranscript>> {
+  return request(`/api/ai/tickets/${encodeURIComponent(id)}/transcript`);
+}
+
+/**
+ * The operator's copy, for working a queue.
+ *
+ * Separate from `fetchTranscript` rather than a flag on it: the admin path is
+ * gated by `requireAdmin()` in the proxy, and the reporter path by ownership in
+ * the backend, and those are different guarantees about different people. A
+ * boolean here would be a caller choosing which of the two rules to apply.
+ */
+export function fetchAdminTranscript(id: string): Promise<PortalResult<TicketTranscript>> {
+  return request(`/api/ai/admin/tickets/${encodeURIComponent(id)}/transcript`);
+}
+
 /** Human wording for a failure, used where the UI has to say it inline. */
 export function describePortalError(error: PortalError): string {
   switch (error.kind) {
@@ -203,6 +248,7 @@ export function describePortalError(error: PortalError): string {
  * ------------------------------------------------------------------ */
 
 const NO_MESSAGES: TicketMessage[] = [];
+const NO_TURNS: TranscriptTurn[] = [];
 
 export interface AsyncState<T> {
   data: T | null;
@@ -293,6 +339,52 @@ export function useClaimTicket(onClaimed?: () => void): {
   const clearError = React.useCallback(() => setError(null), []);
 
   return { claiming, error, clearError, claim };
+}
+
+/**
+ * The spoken intake of one ticket, loaded once on mount.
+ *
+ * A reporter reading their own filed ticket while waiting for a crew may want
+ * to check what they actually said — a phone number transcribed wrongly is worth
+ * catching while there is still time to correct it. So this is a first-class
+ * read on the reporter's own page, not an admin-only artefact.
+ *
+ * `turns` is always an array, empty for a typed ticket, and the load is
+ * independent of the conversation above it: `not_found` leaves the page able to
+ * render the ticket itself rather than blanking it, because the transcript is a
+ * record of how the ticket was taken and not the ticket.
+ */
+export function useTicketTranscript(id: string): AsyncState<TranscriptTurn[]> & {
+  reload: () => void;
+} {
+  const [state, setState] = React.useState<AsyncState<TranscriptTurn[]>>({
+    data: null,
+    error: null,
+    loading: true,
+  });
+  const [nonce, setNonce] = React.useState(0);
+
+  React.useEffect(() => {
+    let live = true;
+    setState((prev) => ({ ...prev, loading: true }));
+    void fetchTranscript(id).then((result) => {
+      if (!live) return;
+      if (result.ok) {
+        setState({ data: result.value.turns, error: null, loading: false });
+      } else {
+        setState({ data: null, error: result.error, loading: false });
+      }
+    });
+    return () => {
+      live = false;
+    };
+  }, [id, nonce]);
+
+  return {
+    ...state,
+    data: state.data ?? NO_TURNS,
+    reload: () => setNonce((n) => n + 1),
+  };
 }
 
 /**
