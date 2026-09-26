@@ -90,9 +90,10 @@ function validate(body: unknown): Validation {
       notes: text(b.notes, 2000),
       source: 'ai-chat',
       session_id: text(b.session_id, 64) || 'anonymous',
-      // Deliberately not read from the body. `validate` drops it, and the value
-      // below is the only one that reaches the backend — see `POST` for why
-      // that matters.
+      // Deliberately not read from the body: `validate` drops whatever the
+      // caller sent. The value that decides ownership is the session address,
+      // and it reaches the backend in the `x-ticket-owner` header set in `POST`
+      // — never in this field, which the backend overwrites from that header.
       owner_email: null,
     },
   };
@@ -146,20 +147,38 @@ export async function POST(request: Request) {
   const result = validate(body);
   if (!result.ok) return badRequest(result.error);
 
-  // The one place `owner_email` is decided.
+  // The one place the ticket's owner is decided.
   //
   // A ticket is bound to an account only if the person filing it already had a
-  // session, and the value comes from the session cookie rather than the
-  // request — the cookie is httpOnly, so the browser cannot read it and cannot
-  // put someone else's address in a body field. That is what makes this
-  // trustworthy where a body value would be forgeable: the POST proxy *is*
-  // browser-reachable, and without this line a caller could stamp any address
-  // onto any ticket and then read it back through `GET /api/ai/tickets`.
+  // session, and the address is resolved from the httpOnly session cookie rather
+  // than anything the caller sent — the cookie is httpOnly, so the browser cannot
+  // read it and cannot assert an identity. That resolution happens here and this
+  // handler is the only place the POST proxy touches it.
   //
-  // A signed-out reporter gets `null`, which is a supported outcome, not an
-  // error. Their ticket is real and will be worked; it just has no portal.
+  // It travels to the backend in the `x-ticket-owner` header, and the header is
+  // load-bearing: `create_ticket` reads ownership from `_request_owner(request)`
+  // and `_clean` then overwrites the body's `owner_email` with it, so a request
+  // that omits the header inserts `owner_email = NULL` no matter what the body
+  // says. That is what stops any direct caller of the backend from filing a
+  // ticket as a victim and then reading their queue through `/api/tickets/mine`,
+  // and it is the same header `GET` and `POST /api/ai/tickets/claim` already
+  // send. Setting the body field alone is not a weaker version of this — it is
+  // no ownership at all, which is how a signed-in reporter's ticket used to end
+  // up orphaned and invisible in `/tickets`.
+  //
+  // A signed-out reporter gets no header, which is a supported outcome, not an
+  // error. Their ticket is real and will be worked; it just has no portal, and
+  // `POST /api/ai/tickets/claim` is the way back if they sign in later.
   const email = await sessionEmail();
   result.payload.owner_email = email;
+
+  // Conditional on purpose: `Headers` coerces a `null` value to the literal
+  // string "null", which is a non-empty header. `_request_owner` would accept
+  // it as a real address and every anonymous ticket would be filed under an
+  // account called "null" — owned by nobody in `/tickets` and unmanageable from
+  // anywhere else. Omitting the key is what makes "signed out" mean signed out.
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (email) headers['x-ticket-owner'] = email;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), AI_TIMEOUT_MS);
@@ -167,7 +186,7 @@ export async function POST(request: Request) {
   try {
     const upstream = await fetch(`${backendUrl()}/api/tickets`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(result.payload),
       signal: controller.signal,
     });
