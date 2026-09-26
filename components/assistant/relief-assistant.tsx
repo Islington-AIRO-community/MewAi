@@ -14,6 +14,7 @@ import {
 import type { ActionCard, VoiceState } from '@/lib/types';
 import { cn, truncate } from '@/lib/utils';
 import { useApp } from '@/lib/store';
+import type { AiChatApi } from '@/lib/use-ai-chat';
 import { usePrefersReducedMotion } from '@/lib/hooks';
 import { Button } from '@/components/ui/button';
 import { TabList, TabPanel, TabsProvider } from '@/components/ui/tabs';
@@ -40,15 +41,25 @@ export function ReliefAssistant({
   defaultOpen = false,
   className,
   onOpenChange,
+  ai,
 }: {
   variant?: 'floating' | 'fullscreen';
   defaultMode?: Mode;
   defaultOpen?: boolean;
   className?: string;
   onOpenChange?: (open: boolean) => void;
+  /**
+   * The live intake, owned by the mounting surface rather than created here.
+   *
+   * The hook is a required prop rather than an internal one because the surfaces
+   * that can *also* start a conversation — the /chat quick phrases, the
+   * `?intent=` deep link, the floating launcher in the shell — must drive the
+   * same intake instance, or a ticket draft started in one place would not be
+   * the draft the other place is reviewing.
+   */
+  ai: AiChatApi;
 }) {
-  const { messages, actionCards, isResponding, sendMessage, confirmActionCard, dismissActionCard } =
-    useApp();
+  const { messages, actionCards, confirmActionCard, dismissActionCard } = useApp();
   const pathname = usePathname();
   const reduced = usePrefersReducedMotion();
 
@@ -61,6 +72,15 @@ export function ReliefAssistant({
   const [expanded, setExpanded] = React.useState(false);
   const panelRef = React.useRef<HTMLDivElement>(null);
   const closeRef = React.useRef<HTMLButtonElement>(null);
+
+  // Always the latest `ai.send`. The voice loop below schedules work with
+  // `setTimeout` and a typing interval, and those callbacks capture the render
+  // that started them — so they read the current function through this ref
+  // rather than a binding from a possibly long-past render. It is deliberately
+  // not an effect dep: `ai.send` changes identity on every draft edit, and
+  // depending on it would restart the voice loop mid-conversation.
+  const sendRef = React.useRef(ai.send);
+  sendRef.current = ai.send;
 
   const isFullscreen = variant === 'fullscreen';
   const show = isFullscreen ? true : open;
@@ -177,14 +197,17 @@ export function ReliefAssistant({
           } else {
             window.setTimeout(() => {
               setVoiceState('speaking');
-              sendMessage(line, { viaVoice: true });
+              // Spoken turns are real turns, so they go through the intake
+              // rather than the scripted path. Read from a ref because
+              // `ai.send` changes identity on every draft edit and putting it
+              // in this effect's deps would restart the loop mid-conversation.
+              sendRef.current(line, { viaVoice: true });
             }, 600);
           }
         }
       }, 26);
     };
     typeNext();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [voiceState]);
 
   // Return to listening after the assistant finishes speaking.
@@ -196,6 +219,16 @@ export function ReliefAssistant({
     }, 2600);
     return () => window.clearTimeout(t);
   }, [voiceState]);
+
+  const handleSend = React.useCallback(
+    (text: string) => {
+      // Route through the live intake: it drives the backend and advances the
+      // ticket draft. The store's scripted replies are the fallback underneath,
+      // so a backend outage degrades instead of breaking.
+      void ai.send(text);
+    },
+    [ai],
+  );
 
   const handleConfirm = React.useCallback(
     (card: ActionCard) => {
@@ -209,13 +242,6 @@ export function ReliefAssistant({
       dismissActionCard(card.id);
     },
     [dismissActionCard],
-  );
-
-  const handleSend = React.useCallback(
-    (text: string) => {
-      sendMessage(text);
-    },
-    [sendMessage],
   );
 
   /* ---------------- Content ---------------- */
@@ -330,12 +356,13 @@ export function ReliefAssistant({
         <ChatPanel
           messages={messages}
           actionCards={actionCards}
-          isResponding={isResponding}
+          isResponding={ai.busy}
           onSend={handleSend}
           onConfirmCard={handleConfirm}
           onDismissCard={handleDismiss}
           voiceState={voiceState}
           onToggleMic={toggleMic}
+          ai={ai}
         />
       </TabPanel>
 

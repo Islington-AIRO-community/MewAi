@@ -7,7 +7,7 @@ import { ReliefAssistant } from '@/components/assistant/relief-assistant';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { useApp } from '@/lib/store';
+import { useAiChat } from '@/lib/use-ai-chat';
 import { CATEGORIES } from '@/lib/types';
 
 const QUICK_PHRASES = [
@@ -17,12 +17,16 @@ const QUICK_PHRASES = [
   'We have no clean drinking water',
   'A child is missing near the canal',
   'There is a downed power line across the road',
+  'Men with machetes are going through the houses on our street',
 ];
 
 export function ChatExperience() {
   const searchParams = useSearchParams();
   const intent = searchParams?.get('intent');
-  const { sendMessage } = useApp();
+  // One intake for this page: the assistant panel, the quick phrases and the
+  // `?intent=` deep link all drive it, so a phrase tapped in the side rail
+  // advances the same ticket draft the composer does.
+  const ai = useAiChat();
   const [seeded, setSeeded] = React.useState(false);
 
   // Deep link: /chat?intent=medical opens the conversation with that need.
@@ -32,10 +36,10 @@ export function ChatExperience() {
     if (!cat) return;
     setSeeded(true);
     const t = window.setTimeout(() => {
-      sendMessage(`I need help with ${cat.label.toLowerCase()}. ${cat.description}.`);
+      void ai.send(`I need help with ${cat.label.toLowerCase()}. ${cat.description}.`);
     }, 400);
     return () => window.clearTimeout(t);
-  }, [intent, seeded, sendMessage]);
+  }, [intent, seeded, ai]);
 
   return (
     <div className="flex min-h-[calc(100dvh-4.25rem)] flex-col">
@@ -46,7 +50,7 @@ export function ChatExperience() {
           className="flex min-h-[calc(100dvh-4.25rem)] flex-col border-navy-200 lg:col-span-8 lg:border-r"
         >
           <h1 className="sr-only">AI Relief Assistant</h1>
-          <ReliefAssistant variant="fullscreen" />
+          <ReliefAssistant variant="fullscreen" ai={ai} />
         </section>
 
         {/* ---------- Side rail ---------- */}
@@ -66,7 +70,8 @@ export function ChatExperience() {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => sendMessage(p)}
+                    onClick={() => void ai.send(p)}
+                    disabled={ai.busy}
                     className="h-auto w-full justify-start whitespace-normal py-2.5 text-left text-xs font-semibold leading-snug"
                   >
                     {p}

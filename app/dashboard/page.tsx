@@ -16,6 +16,7 @@ import {
   Home,
   Mic,
   Search,
+  Shield,
   Siren,
   Users,
 } from 'lucide-react';
@@ -69,6 +70,7 @@ const CATEGORY_ICONS = {
   infrastructure: Flame,
   'missing-person': Users,
   evacuation: Compass,
+  security: Shield,
 } as const;
 
 export default function DashboardPage() {
@@ -383,7 +385,10 @@ export default function DashboardPage() {
           >
             I need help with
           </h2>
-          <div className="mt-3.5 grid grid-cols-2 gap-2.5 sm:grid-cols-4 lg:grid-cols-7">
+          {/* Column counts must divide `CATEGORIES` (8) evenly at every
+              breakpoint. 7 left an orphan tile on its own row once `security`
+              was added; 4 and 8 both divide 8, so no width produces a gap. */}
+          <div className="mt-3.5 grid grid-cols-2 gap-2.5 sm:grid-cols-4 xl:grid-cols-8">
             {Object.values(CATEGORIES).map((cat) => {
               const Icon = CATEGORY_ICONS[cat.id];
               return (
