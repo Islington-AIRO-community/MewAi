@@ -171,12 +171,19 @@ export function ReliefAssistant({
   }, []);
 
   // Simulated turn-taking so the voice UI demonstrates every state.
+  //
+  // These lines are typed *and sent* — `sendRef.current` puts them through the
+  // real intake — so they used the Fairmount Apartments scenario from the seed
+  // that has since been removed, which meant switching to the voice tab quietly
+  // filed a ticket for an incident the reporter never described. The specifics
+  // are now generic: the demo still walks every state, but it no longer invents
+  // an address, a household or an injury and feeds them to the model.
   React.useEffect(() => {
     if (voiceState !== 'listening') return;
     const lines = [
-      'There are three of us in the basement of Fairmount Apartments',
+      'There are three of us in the building',
       'The water is coming up fast and my partner cannot walk',
-      'We are on Alder Street, Eastvale, block C',
+      'We are on the east side of the city',
     ];
     let i = 0;
     const typeNext = () => {

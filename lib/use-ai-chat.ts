@@ -229,9 +229,8 @@ export function useAiChat(): AiChatApi {
   // incident. It also meant a new visitor's first turn arrived with seven
   // turns of someone else's emergency in context.
   //
-  // The visible transcript in the store is unaffected and keeps its seed; that
-  // is demo content for the dashboard, and the store's scripted replies depend
-  // on it. It is simply no longer treated as something the user said.
+  // The store's visible transcript is now empty for the same reason, so there is
+  // one rule rather than two: what the reporter sees is what the model is sent.
   const transcript = React.useRef<WireMessage[]>([]);
 
   // Hand-edited values, re-sent on every turn so a correction in the review

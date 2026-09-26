@@ -3,13 +3,7 @@
 import * as React from 'react';
 import { useSession } from 'next-auth/react';
 import { sessionToUser, type SessionUser } from '@/lib/session-user';
-import {
-  DEFAULT_REPLY,
-  INITIAL_ACTION_CARDS,
-  INITIAL_MESSAGES,
-  REPORTS,
-  SCRIPTED_REPLIES,
-} from '@/lib/mock-data';
+import { DEFAULT_REPLY, REPORTS, SCRIPTED_REPLIES } from '@/lib/mock-data';
 import type { StoredTicket } from '@/lib/ai-client';
 import type { ActionCard, ChatMessage, Report, StageId } from '@/lib/types';
 import { routeForSupportTypes, SUPPORT_TYPES } from '@/lib/types';
@@ -121,8 +115,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const { data: session, status } = useSession();
   const user = React.useMemo(() => sessionToUser(session, status), [session, status]);
   const [reports, setReports] = React.useState<Report[]>(REPORTS);
-  const [messages, setMessages] = React.useState<ChatMessage[]>(INITIAL_MESSAGES);
-  const [actionCards, setActionCards] = React.useState<ActionCard[]>(INITIAL_ACTION_CARDS);
+  // Both start empty. A visitor's transcript must contain only what they
+  // actually said: a seeded conversation rendered an emergency that never
+  // happened, with cards already marked "Dispatched". See the note above
+  // `SCRIPTED_REPLIES` in `@/lib/mock-data`.
+  const [messages, setMessages] = React.useState<ChatMessage[]>([]);
+  const [actionCards, setActionCards] = React.useState<ActionCard[]>([]);
   const [isResponding, setIsResponding] = React.useState(false);
   const [nextReportSeq, setNextReportSeq] = React.useState(426);
   const idSeed = React.useRef(0);
@@ -229,6 +227,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   /* ---- Action card -> report dispatch ---- */
 
+  /**
+   * The only path that turns a card into a report, and therefore the only place
+   * a dispatch in this app is ever asserted: a human pressing "Confirm &
+   * dispatch". A card that arrives any other way is `pending` and has to pass
+   * through here. This does **not** notify a crew — it files an in-memory
+   * report, and `/reports` has no persistence — so the UI must not claim a
+   * response is on its way.
+   */
   const confirmActionCard = React.useCallback<AppContextValue['confirmActionCard']>(
     (cardId) => {
       const card = actionCards.find((c) => c.id === cardId);
