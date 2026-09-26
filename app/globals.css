@@ -1,0 +1,216 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* ---- Surfaces ---- */
+    --surface: 248 250 252; /* #F8FAFC */
+    --surface-raised: 255 255 255;
+    --ink: 2 6 23; /* #020617 */
+    --muted-ink: 71 85 105; /* #475569 */
+
+    /* ---- Focus ring (WCAG 2.2 non-text contrast) ---- */
+    --ring: 37 99 235;
+
+    /* ---- Mobile bottom furniture ----
+       The tab bar and the SOS strip above it are both fixed, so they share one
+       height token. Anything docked above the tab bar offsets by this value
+       instead of a magic rem number that silently drifts out of alignment. */
+    --tabbar-h: 4.25rem;
+    --sos-strip-h: 4.5rem;
+
+    color-scheme: light;
+  }
+
+  * {
+    @apply border-navy-200;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-surface text-ink antialiased;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'ss01';
+    text-rendering: optimizeLegibility;
+    /* Prevent iOS zoom-on-focus by keeping inputs at 16px */
+  }
+
+  /* Visible, high-contrast focus for every interactive element. */
+  :focus-visible {
+    @apply outline-none ring-2 ring-dispatch-600 ring-offset-2 ring-offset-white;
+    border-radius: inherit;
+  }
+
+  /* Never remove focus rings for keyboard users — only for pointer users. */
+  :focus:not(:focus-visible) {
+    @apply outline-none;
+  }
+
+  ::selection {
+    @apply bg-navy-900 text-white;
+  }
+
+  /* Scrollbars */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(203 213 225) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    @apply rounded-full border-[3px] border-solid border-transparent bg-navy-200 bg-clip-content;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    @apply bg-navy-300 bg-clip-content;
+  }
+}
+
+@layer components {
+  /* ---------- Accessibility helpers ---------- */
+
+  /* Screen-reader-only, but still focusable (skip links) */
+  .sr-only-focusable:not(:focus):not(:focus-within) {
+    @apply sr-only;
+  }
+
+  .skip-link {
+    @apply sr-only-focusable absolute left-4 top-4 z-[100] flex items-center gap-2 rounded-lg bg-navy-900 px-4 py-3 text-sm font-semibold text-white shadow-lift;
+  }
+
+  /* ---------- Typography ---------- */
+  .text-balance {
+    text-wrap: balance;
+  }
+  .text-pretty {
+    text-wrap: pretty;
+  }
+
+  /* Tabular figures for counters, IDs and telemetry */
+  .nums {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum' 1;
+  }
+
+  /* ---------- Surfaces ---------- */
+  .surface-grid {
+    background-image:
+      linear-gradient(to right, rgb(15 23 42 / 0.045) 1px, transparent 1px),
+      linear-gradient(to bottom, rgb(15 23 42 / 0.045) 1px, transparent 1px);
+    background-size: 32px 32px;
+  }
+
+  .surface-grid-dark {
+    background-image:
+      linear-gradient(to right, rgb(255 255 255 / 0.05) 1px, transparent 1px),
+      linear-gradient(to bottom, rgb(255 255 255 / 0.05) 1px, transparent 1px);
+    background-size: 32px 32px;
+  }
+
+  .radial-fade-navy {
+    mask-image: radial-gradient(ellipse 70% 60% at 50% 0%, #000 40%, transparent 100%);
+  }
+
+  .glass {
+    @apply border border-white/60 bg-white/80 backdrop-blur-xl;
+  }
+
+  .glass-dark {
+    @apply border border-white/10 bg-navy-900/80 backdrop-blur-xl;
+  }
+
+  /* ---------- Emergency treatments ---------- */
+  .stripe-alert {
+    background-image: repeating-linear-gradient(
+      135deg,
+      rgb(225 29 72 / 0.09) 0px,
+      rgb(225 29 72 / 0.09) 8px,
+      transparent 8px,
+      transparent 16px
+    );
+  }
+
+  .stripe-critical {
+    background-image: repeating-linear-gradient(
+      -45deg,
+      rgb(225 29 72 / 0.14) 0px,
+      rgb(225 29 72 / 0.14) 6px,
+      transparent 6px,
+      transparent 12px
+    );
+  }
+
+  /* Thin, high-visibility border for critical items */
+  .edge-critical {
+    box-shadow: inset 3px 0 0 0 theme('colors.emergency.500');
+  }
+
+  /* ---------- Voice waveform ---------- */
+  .wave-bar {
+    transform-origin: center;
+    will-change: transform;
+  }
+
+  /* ---------- Range / misc ---------- */
+  .no-tap-highlight {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .safe-bottom {
+    padding-bottom: max(env(safe-area-inset-bottom), 0px);
+  }
+}
+
+@layer utilities {
+  .text-shadow-sm {
+    text-shadow: 0 1px 2px rgb(15 23 42 / 0.08);
+  }
+
+  .grain {
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.35'/%3E%3C/svg%3E");
+  }
+}
+
+/* Respect user motion preferences across the whole product. */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* High-contrast / forced-colors mode support */
+@media (forced-colors: active) {
+  .hc-border {
+    border: 1px solid CanvasText;
+  }
+  :focus-visible {
+    outline: 3px solid Highlight;
+    outline-offset: 2px;
+  }
+}
+
+/* Print: reports must be printable for field teams / paper handouts */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  body {
+    @apply bg-white;
+  }
+}
