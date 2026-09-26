@@ -88,7 +88,11 @@ function validate(body: unknown): Validation {
       urgency,
       on_behalf_of_other: b.on_behalf_of_other === true,
       notes: text(b.notes, 2000),
-      source: 'ai-chat',
+      // Allowlisted rather than passed through, and narrower than the rest of
+      // the body on purpose: `source` is free text the admin tooling reads, so
+      // the browser must not be able to write an arbitrary string into the row.
+      // SOS is the one non-conversational caller that exists.
+      source: b.source === 'sos' ? 'sos' : 'ai-chat',
       session_id: text(b.session_id, 64) || 'anonymous',
       // Deliberately not read from the body: `validate` drops whatever the
       // caller sent. The value that decides ownership is the session address,

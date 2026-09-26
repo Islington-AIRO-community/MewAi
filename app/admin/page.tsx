@@ -9,7 +9,12 @@ import {
   ticketStatusDetail,
 } from '@/components/assistant/ticket-status';
 import { PRIORITIES, SUPPORT_TYPE_LIST, type SupportType } from '@/lib/types';
-import { fetchAdminQueue, setTicketStatus } from '@/lib/ticket-portal';
+import {
+  fetchAdminQueue,
+  fetchAdminStats,
+  setTicketStatus,
+  type TicketStats,
+} from '@/lib/ticket-portal';
 import { formatDateTime } from '@/lib/time';
 import type { StoredTicket, TicketStatus } from '@/lib/ai-client';
 import { cn } from '@/lib/utils';
@@ -41,6 +46,7 @@ const STATUS_ORDER: TicketStatus[] = [
 
 export default function AdminQueuePage() {
   const [tickets, setTickets] = React.useState<StoredTicket[] | null>(null);
+  const [stats, setStats] = React.useState<TicketStats | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [filter, setFilter] = React.useState<TicketStatus | 'all'>('all');
@@ -63,6 +69,31 @@ export default function AdminQueuePage() {
     void load(filter);
   }, [filter, load]);
 
+  /**
+   * Counts are a second request, and a failure here is deliberately silent.
+   *
+   * The queue is what a responder is working from; the counts are context. If
+   * `GET /api/tickets/stats` fails while the queue succeeds - an older backend,
+   * a proxy hiccup - the responder still gets a usable queue, and a `0` or a
+   * "could not load" banner standing in for the numbers would be worse than the
+   * numbers being briefly absent. It also does not block: awaiting this
+   * alongside the queue would delay the list in order to decorate it.
+   *
+   * Keyed on `filter` as well as `tickets` so a status move re-reads the counts:
+   * the whole point of the panel is to move when the distribution moves, and
+   * advancing a ticket is exactly the action that changes a bucket.
+   */
+  const [statsNonce, setStatsNonce] = React.useState(0);
+  React.useEffect(() => {
+    let cancelled = false;
+    void fetchAdminStats().then((result) => {
+      if (!cancelled && result.ok) setStats(result.value);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [filter, tickets, statsNonce]);
+
   const advance = async (ticket: StoredTicket, status: TicketStatus) => {
     setBusyId(ticket.id);
     const result = await setTicketStatus(ticket.id, status);
@@ -75,6 +106,7 @@ export default function AdminQueuePage() {
           ? prev.map((t) => (t.id === result.value.id ? result.value : t))
           : prev,
       );
+      setStatsNonce((n) => n + 1);
       return;
     }
     setError(describe(result.error.kind));
@@ -130,6 +162,8 @@ export default function AdminQueuePage() {
       </div>
 
       <div className="container py-6 sm:py-8">
+        <QueueStats stats={stats} />
+
         {error && (
           <p className="mb-4 flex items-start gap-2 rounded-xl border border-alert-200 bg-alert-50 px-3.5 py-2.5 text-xs font-semibold leading-relaxed text-alert-800">
             <ShieldAlert className="mt-px size-3.5 shrink-0" aria-hidden="true" />
@@ -175,6 +209,83 @@ export default function AdminQueuePage() {
       </div>
     </div>
   );
+}
+
+/**
+ * Queue counts from `GET /api/tickets/stats`.
+ *
+ * Not the dashboard's `StatCard`, which wants a `spark` trend array. There is no
+ * honest way to produce one here: the counts are lifetime aggregates over a
+ * table with no history, so any sparkline drawn on them would be invented
+ * history on a responder's screen. A number and its label is what the data
+ * actually supports.
+ *
+ * `by_support` deliberately does not sum to `total`, because a ticket with
+ * three support types is counted in three classes. That is said out loud rather
+ * than left to look like a bug - a responder who thinks the panel is lying stops
+ * reading it.
+ */
+function QueueStats({ stats }: { stats: TicketStats | null }) {
+  if (!stats) return null;
+
+  const support = SUPPORT_TYPE_LIST.map((s) => [s.id, stats.by_support[s.id] ?? 0] as const)
+    .filter(([, n]) => n > 0)
+    .sort((a, b) => b[1] - a[1]);
+
+  return (
+    <section aria-label="Queue summary" className="mb-5">
+      <div className="grid gap-3.5 sm:grid-cols-2 xl:grid-cols-4">
+        <CountTile label="Filed in total" value={stats.total} />
+        {STATUS_ORDER.map((status) => (
+          <CountTile
+            key={status}
+            label={status.replace('_', ' ')}
+            value={stats.by_status[status] ?? 0}
+          />
+        ))}
+      </div>
+
+      {support.length > 0 && (
+        <Card className="mt-3.5 p-4 sm:p-5">
+          <h2 className="text-2xs font-bold uppercase tracking-[0.06em] text-navy-400">
+            What people are asking for
+          </h2>
+          <ul className="mt-3 flex flex-wrap gap-2">
+            {support.map(([id, n]) => (
+              <li
+                key={id}
+                className="flex items-center gap-2 rounded-full bg-navy-50 px-3 py-1.5 text-2xs font-semibold text-navy-700"
+              >
+                {supportName(id)}
+                <span className="nums font-mono font-bold text-navy-900">{n}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2.5 text-2xs leading-relaxed text-navy-400">
+            A ticket can need more than one kind of help, so these add up to more than
+            the filed total.
+          </p>
+        </Card>
+      )}
+    </section>
+  );
+}
+
+function CountTile({ label, value }: { label: string; value: number }) {
+  return (
+    <Card className="p-4">
+      <p className="text-2xs font-bold uppercase tracking-[0.06em] text-navy-400">
+        {label}
+      </p>
+      <p className="nums mt-1.5 font-mono text-2xl font-extrabold text-navy-900">
+        {value}
+      </p>
+    </Card>
+  );
+}
+
+function supportName(id: string): string {
+  return SUPPORT_TYPE_LIST.find((s) => s.id === id)?.shortLabel ?? id;
 }
 
 function QueueRow({

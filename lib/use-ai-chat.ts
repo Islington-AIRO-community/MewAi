@@ -136,15 +136,12 @@ const SLOT_TO_FIELD: Record<SlotName, keyof TicketDraft> = {
 };
 
 /**
- * The other direction, and the one the review form needs.
+ * Draft field -> `SlotName`, for the `known_facts` block.
  *
- * `edits` is keyed by `SlotName` because that is what the backend's
- * `_apply_edits` looks up in its camelCase `TicketDraft`. The draft is keyed by
- * snake_case because that is what the wire uses. The form edits the draft, so
- * the mapping has to happen here — keying `edits` by the draft field name
- * instead meant every hand correction was silently dropped on the way to
- * `_apply_edits`, and a reporter's fix to their own address evaporated on the
- * next turn.
+ * Strictly the nine slots. `notes` is free text the reporter adds rather than a
+ * fact the model established, so it is not a fact and must not appear here — the
+ * backend's `_clean_facts` drops any key that is not a real `SlotName` anyway,
+ * so sending one would be noise at best.
  */
 const FIELD_TO_SLOT: Partial<Record<keyof TicketDraft, SlotName>> = Object.fromEntries(
   (Object.entries(SLOT_TO_FIELD) as [SlotName, keyof TicketDraft][]).map(([slot, field]) => [
@@ -152,6 +149,37 @@ const FIELD_TO_SLOT: Partial<Record<keyof TicketDraft, SlotName>> = Object.fromE
     slot,
   ]),
 ) as Partial<Record<keyof TicketDraft, SlotName>>;
+
+/**
+ * Draft field -> the key the backend's `_apply_edits` matches on.
+ *
+ * For the nine slots that key is the `SlotName` itself, which is why `edits` is
+ * keyed that way at all — the draft is keyed by snake_case because that is what
+ * the wire uses, and the form edits the draft, so the mapping has to happen here.
+ * Keying `edits` by the draft field name instead meant every hand correction was
+ * silently dropped on the way to `_apply_edits`, and a reporter's fix to their
+ * own address evaporated on the next turn.
+ *
+ * Wider than `FIELD_TO_SLOT` by exactly one field. `notes` is editable and the
+ * backend has a `case "notes"` for it, but it has no `SlotName`, so it was being
+ * dropped from this end: the old lookup returned `undefined` and the edit never
+ * left the browser. Same failure as the keying bug above, from the opposite end.
+ */
+const FIELD_TO_EDIT_KEY: Partial<Record<keyof TicketDraft, string>> = {
+  ...FIELD_TO_SLOT,
+  notes: 'notes',
+};
+
+/**
+ * The reverse, derived from the same table rather than written out again so the
+ * two cannot drift.
+ *
+ * This is what notices an edit the reporter has since changed and drops it, so a
+ * stale correction cannot pin a field to a value they just fixed.
+ */
+const EDIT_KEY_TO_FIELD = Object.fromEntries(
+  Object.entries(FIELD_TO_EDIT_KEY).map(([field, key]) => [key, field]),
+) as Record<string, keyof TicketDraft>;
 
 /**
  * The draft as a `SlotName` -> string map, for the facts block.
@@ -290,11 +318,13 @@ export function useAiChat(): AiChatApi {
       });
 
       // Drop edits for values the user has since changed, so a stale correction
-      // cannot pin a field to something they just fixed. Keyed by `SlotName` for
-      // the same reason `edit()` writes them that way.
-      for (const slot of Object.keys(edits.current) as SlotName[]) {
-        const field = SLOT_TO_FIELD[slot];
-        if (field && draft[field] !== edits.current[slot]) delete edits.current[slot];
+      // cannot pin a field to something they just fixed. Walked through
+      // `EDIT_KEY_TO_FIELD` rather than `SLOT_TO_FIELD` so `notes` is pruned
+      // too — a `notes` edit that outlived the text it corrected would keep
+      // re-applying itself on every later turn.
+      for (const key of Object.keys(edits.current)) {
+        const field = EDIT_KEY_TO_FIELD[key];
+        if (field && draft[field] !== edits.current[key]) delete edits.current[key];
       }
 
       setState((prev) => ({
@@ -357,14 +387,14 @@ export function useAiChat(): AiChatApi {
     setState((prev) => {
       const draft = { ...prev.draft, ...patch };
       // Record the edit so the next assistant turn cannot revert it. Keyed by
-      // `SlotName`, not by the draft's field name: this is the map the backend
-      // reads, and keying it the other way is what made corrections vanish.
+      // the key `_apply_edits` matches on, not by the draft's field name: that
+      // is what made corrections vanish.
       for (const [field, value] of Object.entries(patch) as [
         keyof TicketDraft,
         unknown,
       ][]) {
-        const slot = FIELD_TO_SLOT[field];
-        if (slot && typeof value === 'string' && value.trim()) edits.current[slot] = value;
+        const key = FIELD_TO_EDIT_KEY[field];
+        if (key && typeof value === 'string' && value.trim()) edits.current[key] = value;
       }
       return {
         ...prev,

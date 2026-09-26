@@ -86,3 +86,38 @@ async def test_an_unavailable_database_is_not_the_same_as_an_empty_queue():
         await tickets_router.list_tickets(FakeRequest(DownStore()))
 
     assert caught.value.status_code == 503
+
+
+async def test_my_tickets_reports_unavailable_rather_than_no_account():
+    """`/mine` used to check the header before the database, so an outage came
+    back as 400 "No account on this request" — which reads to a signed-in
+    reporter as though their session had gone, rather than as a retryable
+    outage."""
+    with pytest.raises(HTTPException) as caught:
+        await tickets_router.list_my_tickets(FakeRequest(DownStore()))
+
+    assert caught.value.status_code == 503
+
+
+async def test_claiming_reports_unavailable_rather_than_refusing():
+    """
+    The worst of the seven, and the reason the ordering is pinned.
+
+    Anonymous intake is a supported path, so `/claim` is how someone gets their
+    ticket back. Answering 404 here — which is what the header check used to do
+    when the database was down — tells a reporter who has just typed in their
+    reference and phone number that the ticket they filed does not exist, during
+    a database blip, with no other way to find out what is happening.
+    """
+    with pytest.raises(HTTPException) as caught:
+        await tickets_router.claim_ticket(
+            tickets_router.TicketClaim(
+                ticket_id="TKT-000001", reporter_phone="0722 555 019"
+            ),
+            FakeRequest(DownStore()),
+        )
+
+    assert caught.value.status_code == 503
+    # Still not a refusal: the fixed claim string must not appear, or a caller
+    # would read it as "no such ticket" rather than "try again".
+    assert "do not match a ticket" not in str(caught.value.detail).lower()

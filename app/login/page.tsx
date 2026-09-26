@@ -20,6 +20,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { EmergencyStatusBadge } from '@/components/emergency/emergency-status-badge';
 import { SYSTEM_STATUS } from '@/lib/types';
+import { useApp } from '@/lib/store';
 
 /** Inline Google "G" mark — no external image request. */
 function GoogleMark({ className }: { className?: string }) {
@@ -57,6 +58,11 @@ const DEFAULT_DESTINATION = '/dashboard';
 export default function LoginPage() {
   const router = useRouter();
   const { status } = useSession();
+  // The SOS control below raises the shell dialog instead of navigating, so it
+  // needs the store. Reading it here rather than in the header is the point:
+  // someone who cannot or will not sign in still has to be one tap from an
+  // emergency.
+  const { openSos } = useApp();
   const [pending, setPending] = React.useState(false);
   const [destination, setDestination] = React.useState(DEFAULT_DESTINATION);
 
@@ -235,12 +241,23 @@ export default function LoginPage() {
                   </p>
                 </div>
               </div>
-              <Button asChild variant="sos" size="lg" block className="mt-3.5 stripe-critical">
-                <Link href="/dashboard">
-                  <PhoneCall aria-hidden="true" />
-                  Send emergency SOS
-                  <ArrowRight className="size-4" aria-hidden="true" />
-                </Link>
+              {/*
+                Opens the dialog rather than navigating. This sat on the signed-out
+                escape hatch, which is the one place someone in an emergency is
+                most likely to arrive, and it used to link to `/dashboard` —
+                behind the sign-in this card exists to let them skip.
+              */}
+              <Button
+                type="button"
+                variant="sos"
+                size="lg"
+                block
+                className="mt-3.5 stripe-critical"
+                onClick={openSos}
+              >
+                <PhoneCall aria-hidden="true" />
+                Send emergency SOS
+                <ArrowRight className="size-4" aria-hidden="true" />
               </Button>
             </div>
           </div>

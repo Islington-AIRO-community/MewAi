@@ -53,8 +53,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 }
 
 function Shell({ children }: { children: React.ReactNode }) {
-  const [sosOpen, setSosOpen] = React.useState(false);
-  const { reports, actionCards } = useApp();
+  // `sosOpen` lives in the store rather than here, so any surface can raise an
+  // emergency and not only the four this shell owns. See `AppContextValue`.
+  const { reports, actionCards, sosOpen, openSos, closeSos } = useApp();
   const { toast } = useToast();
   const pathname = usePathname();
 
@@ -78,12 +79,20 @@ function Shell({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingCards]);
 
+  /**
+   * Fires only after a ticket row exists — the dialog owns the sending and the
+   * failure states, and this is told when it genuinely succeeded.
+   *
+   * "Nearest units are en route" was removed: nothing dispatches automatically.
+   * The ticket is in the queue awaiting triage, and that is the whole of what
+   * can be claimed at this point.
+   */
   const onSosDispatched = React.useCallback(
     (reportId: string) => {
       toast({
         tone: 'critical',
         title: 'Emergency alert sent',
-        description: `${reportCodeFromId(reportId)} created. Nearest units are en route.`,
+        description: `${reportCodeFromId(reportId)} is in the response queue for triage.`,
       });
     },
     [toast],
@@ -95,13 +104,13 @@ function Shell({ children }: { children: React.ReactNode }) {
         Skip to main content
       </a>
 
-      <SiteHeader onOpenSos={() => setSosOpen(true)} />
+      <SiteHeader onOpenSos={openSos} />
 
       <main id="main" tabIndex={-1} className="flex-1 outline-none">
         {children}
       </main>
 
-      <SiteFooter onOpenSos={() => setSosOpen(true)} />
+      <SiteFooter onOpenSos={openSos} />
 
       {/* Persistent quick access.
           The assistant dock sits directly above the SOS bar (≈6.5rem tall on
@@ -110,13 +119,13 @@ function Shell({ children }: { children: React.ReactNode }) {
         <ReliefAssistant variant="floating" ai={ai} />
       </div>
 
-      <SosFloatingBar onOpenSos={() => setSosOpen(true)} unreadCount={activeCount} />
+      <SosFloatingBar onOpenSos={openSos} unreadCount={activeCount} />
 
       <MobileTabBar pathname={pathname} />
 
       <SosDialog
         open={sosOpen}
-        onClose={() => setSosOpen(false)}
+        onClose={closeSos}
         onDispatched={onSosDispatched}
       />
     </div>

@@ -141,6 +141,25 @@ export function fetchAdminQueue(
 }
 
 /**
+ * Queue counts, for the top of `/admin`.
+ *
+ * `by_support` is keyed the same way the rest of the intake is: the raw
+ * `SupportType` values, so one ticket with three support types is counted three
+ * times and the row does not sum to `total`. The UI has to say that, or a
+ * responder reads the mismatch as a bug and stops trusting the numbers.
+ */
+export interface TicketStats {
+  total: number;
+  by_status: Record<string, number>;
+  by_urgency: Record<string, number>;
+  by_support: Record<string, number>;
+}
+
+export function fetchAdminStats(): Promise<PortalResult<TicketStats>> {
+  return request('/api/ai/admin/stats');
+}
+
+/**
  * Attach a ticket that was filed while signed out to the signed-in account.
  *
  * The proof is the reference plus the phone number the reporter gave when they

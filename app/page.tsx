@@ -58,7 +58,7 @@ const GUARANTEES = [
 ];
 
 export default function LandingPage() {
-  const { reports } = useApp();
+  const { reports, openSos } = useApp();
   const sample = reports.find((r) => r.currentStage === 'dispatched') ?? reports[0];
 
   return (
@@ -98,11 +98,23 @@ export default function LandingPage() {
             </p>
 
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
-              <Button asChild variant="accent" size="xl" className="stripe-critical">
-                <Link href="/dashboard">
-                  <Siren aria-hidden="true" />
-                  Send an emergency SOS
-                </Link>
+              {/*
+                An actual button, not a `Link`. This control was a link to
+                `/dashboard` wearing an emergency label and a critical stripe,
+                so the loudest call to action on the entry page did not raise an
+                emergency — it navigated somewhere else. The dialog is shell
+                state reached through the store, which is why a page can open it
+                at all.
+              */}
+              <Button
+                type="button"
+                variant="accent"
+                size="xl"
+                className="stripe-critical"
+                onClick={openSos}
+              >
+                <Siren aria-hidden="true" />
+                Send an emergency SOS
               </Button>
               <Button
                 asChild

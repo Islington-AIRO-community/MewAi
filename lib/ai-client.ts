@@ -283,7 +283,18 @@ export interface CreateTicketInput {
   on_behalf_of_other: boolean;
   notes: string;
   session_id: string;
+  /**
+   * How the ticket was filed. Optional because the proxy is the authority here
+   * and defaults to `'ai-chat'`, so a caller that omits it gets the ordinary
+   * case rather than having to know the vocabulary. The proxy allowlists it —
+   * `'ai-chat'` or `'sos'` — so this cannot be used to write an arbitrary
+   * string into the row.
+   */
+  source?: TicketSource;
 }
+
+/** The only two values the proxy will accept. */
+export type TicketSource = 'ai-chat' | 'sos';
 
 export function createTicket(input: CreateTicketInput): Promise<StoredTicket> {
   return postJson<StoredTicket>('/api/ai/tickets', input);
