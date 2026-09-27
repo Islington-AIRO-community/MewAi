@@ -5,10 +5,11 @@ relief assistant (text **and** hands-free voice) that interviews you and files a
 real ticket, live report tracking with a department-routing timeline, and a
 persistent one-tap SOS surface.
 
-> **Status:** the UI is a demo over mock data, with two real subsystems: the AI
-> intake in `ai-backend/` talks to Gemini, collects a relief ticket, and writes
-> it to Postgres, and sign-in is real Google OAuth. Everything else is client
-> state. There is no real emergency dispatch and no admin queue.
+> **Status:** the UI is a demo over mock data, with three real subsystems: the
+> AI intake in `ai-backend/` talks to Gemini, collects a relief ticket, and
+> writes it to Postgres; sign-in is real Google OAuth; and `/admin` is a real
+> response queue that reads those rows and writes their status. Everything else
+> is client state. There is no real emergency dispatch.
 
 ---
 
@@ -16,6 +17,7 @@ persistent one-tap SOS surface.
 
 - [Quick start](#quick-start)
 - [The AI intake](#the-ai-intake)
+- [The admin queue](#the-admin-queue)
 - [Authentication](#authentication)
 - [What it does](#what-it-does)
 - [Tech stack](#tech-stack)
@@ -53,15 +55,18 @@ Quality gates:
 ```bash
 npm run typecheck  # tsc --noEmit
 npm run lint       # next lint  (next/core-web-vitals)
+npm test           # vitest — 39 tests, 2 files, no jsdom
 ```
 
-Current status — all three pass clean:
+Current status — all clean:
 
 | Check | Result |
 | --- | --- |
-| `npm run build` | 12 routes (8 static, 4 dynamic) + edge middleware, compiles without warnings |
+| `npm run build` | 23 routes (10 static, 13 dynamic) + edge middleware, compiles without warnings |
 | `npm run typecheck` | no errors |
 | `npm run lint` | no warnings or errors |
+| `npm test` | 39 tests, 2 files, no jsdom, no model calls |
+| `ai-backend` pytest | 170 tests, 165 pass, 5 opt-in live tests skipped |
 
 ### Try it in 60 seconds
 
@@ -76,7 +81,9 @@ Current status — all three pass clean:
 6. Press the red **SOS** dock → pick a distress type → one-tap signal creates a
    `CRITICAL` report with an assigned responder and a 4-minute ETA.
 
-To file a real ticket instead, see [The AI intake](#the-ai-intake).
+To file a real ticket instead, see [The AI intake](#the-ai-intake). To see the
+side an operator sees, set `ADMIN_EMAILS` to your own address and open
+`/admin` — see [The admin queue](#the-admin-queue).
 
 ---
 
@@ -87,16 +94,24 @@ create a ticket until every required attribute is present, and writes what it
 collects to Postgres.
 
 ```
-browser ──► /api/ai/chat     (Next route handler) ──► POST /api/chat/message
-browser ──► /api/ai/tickets  (Next route handler) ──► POST /api/tickets
-                                      │                       │
-                                 AI_API_URL            Gemini + Postgres
+browser ──► /api/ai/chat      (Next route handler) ──► POST  /api/chat/message
+browser ──► /api/ai/tickets   (Next route handler) ──► POST  /api/tickets
+browser ──► /api/ai/tickets/… (Next route handler) ──► GET   /api/tickets/mine, /claim, …
+browser ──► /api/ai/admin/…   (Next route handler) ──► GET   /api/tickets, PATCH /{id}/status
+                                          │                   │
+                                     AI_API_URL          Gemini + Postgres
 ```
 
-The Next.js proxy routes exist so the Gemini key never reaches a browser. They
-validate the request, forward it, and pass the status through — `502
-backend_unreachable` when the service is down, which the UI treats as a state
-rather than an error.
+The Next.js proxy routes exist so the Gemini key never reaches a browser, and so
+`/api/ai/admin/*` has somewhere to enforce `ADMIN_EMAILS` — the Python service
+authenticates nobody. They validate the request, forward it, and pass the status
+through: `502 backend_unreachable` when the service is down, which the UI treats
+as a state rather than an error.
+
+One path does **not** go through the proxy: `POST /api/ai/live-token` mints a
+short-lived, single-use Gemini token and the browser then opens a `wss://` socket
+to Gemini directly, so voice audio never touches these servers. See
+[Live voice](#live-voice).
 
 ### Running it
 
@@ -162,10 +177,54 @@ is missing *while the user types*, without a round trip per keystroke. The
 backend is authoritative; the two must agree.
 
 ```bash
-cd ai-backend && .venv/bin/python -m pytest app/tests -q   # 43 tests, no model calls
+cd ai-backend && .venv/bin/python -m pytest app/tests -q   # 170 tests, no model calls
 ```
 
 More detail in [`ai-backend/README.md`](ai-backend/README.md).
+
+---
+
+## The admin queue
+
+A filed ticket is the only thing in this app that outlives a page refresh. So
+there is a screen for the people who answer them: `/admin`, the response queue.
+
+```
+browser ──► /api/ai/admin/tickets   ──► GET  /api/tickets     (the queue)
+browser ──► /api/ai/admin/tickets/… ──► PATCH /api/tickets/{id}/status
+browser ──► /api/ai/admin/stats     ──► GET  /api/tickets/stats
+```
+
+**Access control is an `ADMIN_EMAILS` allowlist** — a comma-separated list in the
+root `.env`, enforced in `app/api/ai/_session.ts` on the response path and again
+in `middleware.ts` for the redirect. It is the whole permission model: no role
+table, no users table. Unset admits nobody, so a deployment that forgets it is
+locked rather than open.
+
+`ai-backend`'s own `GET /api/tickets` and `PATCH /{id}/status` enforce nothing —
+`requireAdmin()` running inside the Next proxy *is* the access control. That is
+why the Python service must stay on a private network.
+
+### What the queue does
+
+- Every filed ticket with the reporter's name and number, location, the support
+  classes it needs, its priority, and how many people are affected.
+- **Filters by status** and, multi-select, **by kind of help** — rescue, supplies,
+  medical, security. Selecting several is a union: a ticket needing medical *and*
+  rescue shows up under either. Both filters run as SQL, not in the page, because
+  the proxy caps a page at 100 rows and narrowing a list the browser already
+  holds can only hide matches. The header says "100 of 143" rather than implying
+  it showed everything.
+- **"Move to" buttons** that write the ticket's status. This is the only writer
+  anywhere in the system, which is the point: the status a reporter reads on their
+  portal comes from the row, so a responder — never the model — decides whether a
+  ticket is under review, dispatched, resolved or closed.
+- Counts by status, urgency and support class. The support counts deliberately
+  sum to more than the total, because one ticket can need several kinds of help,
+  and the panel says so in words rather than leaving it to look like a bug.
+
+The reporter's side of the same data is `/tickets` and `/tickets/[id]`: their own
+queue and a follow-up conversation on one ticket.
 
 ---
 
@@ -191,6 +250,8 @@ cp .env.example .env      # then fill in the four variables below
 | `GOOGLE_CLIENT_SECRET` | the OAuth client's secret |
 | `NEXTAUTH_SECRET` | `openssl rand -base64 32` |
 | `NEXTAUTH_URL` | this app's origin, e.g. `http://localhost:3000` |
+| `AI_API_URL` | the AI service, e.g. `http://127.0.0.1:8000` |
+| `ADMIN_EMAILS` | comma-separated addresses allowed into `/admin`. Unset admits nobody |
 
 Register the redirect URI with Google **exactly** as NextAuth expects, or Google
 rejects the callback:
@@ -205,24 +266,36 @@ become one.
 
 ### What is gated, and what deliberately is not
 
-`middleware.ts` gates **`/reports` only**. Everything else — the landing page,
-`/dashboard`, `/chat`, `/resources`, and the whole SOS flow — works signed out.
+`middleware.ts` gates three subtrees: **`/reports`, `/tickets` and `/admin`**.
+Everything else — the landing page, `/dashboard`, `/chat`, `/resources`, and the
+whole SOS flow — works signed out.
 
-That is a deliberate product decision, not an oversight. Putting a Google
-round-trip in front of someone asking for help during a disaster does real
+Leaving intake open is a deliberate product decision, not an oversight. Putting a
+Google round-trip in front of someone asking for help during a disaster does real
 harm: outages are exactly when this app matters, the person may have no Google
-account, and Google's consent screen is another host that can be unreachable.
-The login page's promise that you can send an SOS without signing in is enforced
-by the matcher, not just asserted in copy.
+account, and Google's consent screen is another host that can be unreachable. The
+login page's promise that you can send an SOS without signing in is enforced by
+the matcher, not just asserted in copy.
+
+The three gated subtrees are gated for two different reasons. `/reports` and
+`/tickets` exist *because* of an account. `/admin` exists because of the
+`ADMIN_EMAILS` allowlist.
 
 ### The gate is a redirect, not authorization
 
-Worth being blunt about: **nothing is being secured.** The reports behind
-`/reports` are mock fixtures in React state — there is no user-scoped data to
-protect, and the store still resets on a hard refresh even while signed in. So
-signing in currently implies a persistence this app cannot yet deliver. The gate
-becomes a real access control when a users table lands, which is deferred along
-with the admin queue. Until then, treat it as a UX affordance.
+Worth being blunt about: **the matcher itself is securing nothing.** A matcher can
+be routed around, so every check that matters is repeated on the response path —
+`requireAdmin()` for `/admin`'s API, and the httpOnly session cookie for the
+owner-scoped ticket reads. The redirect is UX.
+
+Per route:
+
+- `/admin` — real. Every row holds a reporter's name, phone number and address.
+- `/tickets`, `/tickets/[id]` — real, for the same reason. A wrong owner and a
+  missing ticket are both `404`, never `403`, so ids cannot be enumerated.
+- `/reports` — not yet. Still mock fixtures in React state, resetting on refresh,
+  with no user-scoped data to protect. The gate implies a persistence this app
+  cannot yet deliver; it becomes real access control when a users table lands.
 
 ### How it is wired
 
@@ -305,13 +378,60 @@ full-screen experience at `/chat`.
   demo **advance stage** control.
 - Static location map (no third-party tiles, no network dependency).
 
-### 5. Global SOS & quick access
+### 5. Reporter ticket portal (`/tickets`, `/tickets/[id]`)
+
+- `/tickets` — the signed-in reporter's own filed tickets, each with its live
+  status. Ownership is decided by the httpOnly session cookie server-side, never
+  by anything the browser sends.
+- `/tickets/[id]` — one ticket's status plus a follow-up conversation with the
+  assistant. The assistant is handed the status and asked what it *means*; it is
+  never asked what the status *is*.
+- A ticket filed while signed out belongs to nobody — anonymous intake is
+  supported, so `/tickets` offers a **claim** flow: the reference plus the phone
+  number given at filing time.
+
+### 6. Admin response queue (`/admin`)
+
+See [The admin queue](#the-admin-queue). Status and support-type filters over
+every filed ticket, and the only control in the system that writes a ticket's
+status.
+
+### 7. Global SOS & quick access
 
 - Fixed bottom-right dock on desktop; a compact strip on mobile, plus an SOS
   entry point in the footer and the assistant.
 - Distress type picker (medical, immediate danger, fire/hazard, need rescue) →
   confirm-and-hold → auto-dispatch confirmation with a real created report.
 - Creates a `CRITICAL` report with live GPS, auto-dispatch timeline and ETA.
+
+### Live voice
+
+Not a mode of the chat panel — a separate path, and the only one that does not go
+through the Next proxy.
+
+```
+browser ──► POST /api/ai/live-token  (rate-limited per IP)
+         ◄── short-lived, single-use Gemini token
+browser ══► wss://…  Gemini Live  — audio both ways, never through our servers
+```
+
+`lib/live-voice/session.ts` is a state machine over that socket. Its rules were
+reverse-engineered by watching a real connection and are pinned in
+`lib/live-voice/session.test.ts`, because each one fails *silently*:
+
+- `inputTranscription` is **cumulative**, `outputTranscription` is
+  **incremental**. Reading either as the other produces a plausible-looking
+  transcript that is subtly wrong.
+- A turn ends on `voiceActivity.endOfSpeech`, not `turnComplete`, which the
+  service does not reliably send.
+- Input audio goes out as `realtimeInput.audio`. On the pinned API version,
+  `realtimeInput.mediaChunks` is **accepted and silently discarded** — the model
+  hears pure silence, the waveform animates, the status says "Listening", and
+  nothing errors on either end.
+
+The microphone is captured by `public/pcm-capture.worklet.js`, which has its own
+test for the same reason: it once posted not one sample, and every signal the UI
+could see was healthy.
 
 ### Plus
 
@@ -349,24 +469,41 @@ motion primitives actually used are bundled.
 
 | Route | Rendering | Size | First Load JS | Purpose |
 | --- | --- | --- | --- | --- |
-| `/` | static | 4.04 kB | 179 kB | Landing, product story, trust signals |
-| `/login` | static | 5.04 kB | 125 kB | Google sign-in (real OAuth) |
-| `/dashboard` | static | 5.08 kB | 180 kB | Counters, category filters, triage feed, active reports |
-| `/reports` | static | 4.61 kB | 180 kB | Searchable / filterable report list — **the one gated route** |
-| `/reports/[id]` | dynamic | 11.5 kB | 183 kB | Full report detail, timeline, responder |
-| `/chat` | static | 2.2 kB | 190 kB | Full-screen AI assistant (server shell + client island) |
-| `/resources` | static | 6.43 kB | 137 kB | Shelters, supplies, contacts, guides |
-| `/api/ai/chat` | dynamic | — | — | Proxy → `POST /api/chat/message` |
-| `/api/ai/tickets` | dynamic | — | — | Proxy → `POST /api/tickets` |
-| `/api/auth/[...nextauth]` | dynamic | — | — | OAuth handshake → Google |
+| `/` | static | 4.07 kB | 179 kB | Landing, product story, trust signals |
+| `/login` | static | 5.07 kB | 137 kB | Google sign-in (real OAuth) |
+| `/dashboard` | static | 5.09 kB | 180 kB | Counters, category filters, triage feed, active reports |
+| `/reports` | static | 4.62 kB | 180 kB | Searchable / filterable report list — mock data |
+| `/reports/[id]` | dynamic | 11.5 kB | 184 kB | Full report detail, timeline, responder |
+| `/chat` | static | 2.16 kB | 195 kB | Full-screen AI assistant (server shell + client island) |
+| `/tickets` | static | 5.73 kB | 116 kB | The reporter's own filed tickets |
+| `/tickets/[id]` | dynamic | 5.7 kB | 116 kB | One ticket: status + follow-up conversation |
+| `/admin` | static | 5.93 kB | 108 kB | Response queue — status + support-type filters |
+| `/resources` | static | 6.19 kB | 138 kB | Shelters, supplies, contacts, guides |
 | `/_not-found` | static | 873 B | 88.2 kB | 404 |
-| `app/icon.svg` | static | — | — | Favicon |
+| `app/icon.svg` | static | 0 B | — | Favicon |
+
+11 page routes, of which 9 are statically prerendered. Only `/reports/[id]` and
+`/tickets/[id]` are dynamic: both read route params, and neither can export
+`generateStaticParams` because it is a client component.
+
+Route handlers — server-side only, so they add nothing to any bundle:
+
+| Route | Purpose |
+| --- | --- |
+| `/api/auth/[...nextauth]` | OAuth handshake → Google (`nodejs` runtime) |
+| `/api/ai/chat` | Proxy → `POST /api/chat/message` |
+| `/api/ai/tickets` | Proxy → `POST /api/tickets`, `GET /mine`, `POST /claim` |
+| `/api/ai/tickets/[id]`, `[id]/messages` | Proxy → owner-scoped ticket read and follow-up |
+| `/api/ai/admin/tickets` | Proxy → `GET /api/tickets` (allowlisted `status`, `support`, `limit`) |
+| `/api/ai/admin/tickets/[id]` | Proxy → `PATCH /api/tickets/{id}/status` |
+| `/api/ai/admin/stats` | Proxy → `GET /api/tickets/stats` |
+| `/api/ai/live-token` | Mints a single-use Gemini Live token; the browser then connects to Gemini directly |
 
 **87.3 kB** shared First Load JS across every route (React 18 + Next runtime +
-the app shell) — unchanged by adding auth, because `next-auth/react` is only
-pulled into the routes that use it. No page ships an image, icon font, or chart
-library. The route handlers add nothing to it — they are server-side only. The
-edge middleware is a separate 48.5 kB bundle that never reaches the client.
+the app shell) — unchanged by adding auth or the admin queue, because
+`next-auth/react` is only pulled into the routes that use it. No page ships an
+image, icon font, or chart library. The edge middleware is a separate 48.6 kB
+bundle that never reaches the client.
 
 ---
 
@@ -374,26 +511,34 @@ edge middleware is a separate 48.5 kB bundle that never reaches the client.
 
 ```
 flare/
-├── middleware.ts                 # edge gate: /reports requires a session
-├── app/                          # App Router — routes are thin shells
-│   ├── layout.tsx                # metadata, viewport, AppShell
+├── middleware.ts                 # edge redirect: /reports, /tickets, /admin
+├── app/                          # App Router
+│   ├── layout.tsx                # metadata, viewport, AppShell (server component)
 │   ├── globals.css               # tokens, focus rings, a11y/print media queries
 │   ├── icon.svg                  # favicon
-│   ├── page.tsx                  # landing
-│   ├── login/page.tsx
-│   ├── dashboard/page.tsx
+│   ├── page.tsx                  # landing          ┐
+│   ├── login/page.tsx                              │
+│   ├── dashboard/page.tsx                          │ almost every page is
+│   ├── reports/                                   │ "use client" — only
+│   │   ├── page.tsx                               │ layout.tsx and chat/
+│   │   └── [id]/page.tsx                          │ page.tsx are server
+│   ├── tickets/                                   │ components
+│   │   ├── page.tsx                               │
+│   │   └── [id]/page.tsx                          │
+│   ├── admin/page.tsx             # the response queue
+│   ├── resources/page.tsx
 │   ├── chat/
 │   │   ├── page.tsx              # server component shell + <Suspense>
 │   │   └── chat-experience.tsx   # client island (useSearchParams boundary)
-│   ├── reports/
-│   │   ├── page.tsx
-│   │   └── [id]/page.tsx
-│   ├── resources/page.tsx
-│   └── api/ai/                   # server-only proxy to ai-backend
-│       ├── _shared.ts            # backendUrl(), timeout, error shape
-│       ├── chat/route.ts         # POST → /api/chat/message
-│       └── tickets/route.ts      # POST → /api/tickets
-│   └── api/auth/[...nextauth]/    # OAuth handshake (nodejs runtime)
+│   └── api/
+│       ├── auth/[...nextauth]/    # OAuth handshake (nodejs runtime)
+│       └── ai/                    # server-only proxy to ai-backend
+│           ├── _shared.ts         # backendUrl(), timeout, 502/400 shapes
+│           ├── _session.ts        # requireAdmin(), the ADMIN_EMAILS allowlist
+│           ├── chat/route.ts      # POST → /api/chat/message
+│           ├── live-token/route.ts# mints a single-use Gemini Live token
+│           ├── tickets/           # POST, GET /mine, POST /claim, follow-up
+│           └── admin/             # GET queue, PATCH status, GET stats
 ├── components/
 │   ├── ui/                       # design-system primitives
 │   │   ├── button.tsx            # cva variants + sizes, asChild support
@@ -408,6 +553,7 @@ flare/
 │   │   ├── relief-assistant.tsx  # floating orb + panel, mode switcher
 │   │   ├── chat-panel.tsx        # transcript, composer, history, search
 │   │   ├── ticket-review.tsx     # review + edit form, receipt, intake checklist
+│   │   ├── ticket-status.tsx     # status badge + its plain-language meaning
 │   │   ├── voice-panel.tsx       # voice state machine + copy
 │   │   ├── voice-waveform.tsx    # 8 animated bars
 │   │   └── action-card.tsx       # "Information Captured" system cards
@@ -424,29 +570,38 @@ flare/
 │   ├── store.tsx                 # AppProvider — the single client state source
 │   ├── use-ai-chat.ts            # live intake: transcript, draft, review, submit
 │   ├── ai-client.ts              # typed client for /api/ai/*
+│   ├── ticket-portal.ts          # typed client for /tickets and /admin
 │   ├── ticket-intake.ts          # client mirror of ai-backend/app/slots.py
+│   ├── live-voice/               # Gemini Live session, audio, worklet, and their tests
+│   ├── ai-chat-context.tsx       # one AiChatApi for every mount surface
+│   ├── sos-ticket.ts             # filing a ticket from the SOS flow
 │   ├── auth.ts                   # next-auth options — SERVER ONLY
 │   ├── session-user.ts           # session → SessionUser projection (pure)
 │   ├── time.ts                   # fixed demo clock + greeting
 │   ├── utils.ts                  # cn, relativeTime, stamps, report codes
 │   └── hooks.ts                  # media query, count-up, focus trap, localStorage
+├── public/
+│   └── pcm-capture.worklet.js    # microphone capture, loaded into an AudioWorklet
 ├── ai-backend/                   # the AI intake service — see its own README
 │   ├── app/
 │   │   ├── slots.py              # the required-attribute rule (authoritative)
 │   │   ├── prompts.py            # interview spec + JSON response schema
 │   │   ├── gemini.py             # client, model fallback loop, JSON decoding
 │   │   ├── chat_service.py       # one turn: call, parse, apply edits, readiness
+│   │   ├── follow_up_service.py  # per-ticket conversation on a filed ticket
 │   │   ├── db.py  schemas.py  config.py  main.py
-│   │   ├── routers/              # health, chat, tickets
-│   │   └── tests/                # 43 tests, no model calls
+│   │   ├── routers/              # health, chat, tickets, live
+│   │   └── tests/                # 170 tests, no model calls
 │   ├── docker-compose.yml        # Postgres (and optionally the API)
 │   ├── Dockerfile  dev.sh  requirements.txt
 │   └── README.md
 ├── tailwind.config.ts            # design tokens
 ├── next.config.js  postcss.config.js  tsconfig.json  .eslintrc.json
+└── AGENTS.md                     # the accurate architecture reference
 ```
 
-~9,760 lines of TypeScript/TSX across 39 files, plus `globals.css` and
+~17,100 lines of TypeScript/TSX across 68 files (excluding the two test files),
+~6,100 lines of Python across 29 files, plus `globals.css`, the worklet and
 `app/icon.svg`.
 
 ---
@@ -511,8 +666,41 @@ In practice every other page is a `"use client"` component too, so per-route
 `metadata` is not available on them. `AGENTS.md` is the accurate reference for
 component architecture; this README describes the intent.
 
-The other server-side surface is the `/api/ai/*` proxy pair, which keeps the
-Gemini key off the client.
+The other server-side surface is the `/api/ai/*` proxy tree, which keeps the
+Gemini key off the client and gives `/api/ai/admin/*` somewhere to enforce
+`ADMIN_EMAILS`.
+
+### The ticket is the durable thing
+
+Everything in `lib/store.tsx` dies on refresh. A ticket row in Postgres does not,
+which makes the ticket — not the report, not the chat transcript — the thing this
+app actually keeps. Three pages hang off it:
+
+```
+/tickets      the reporter's own list, gated on a Google session
+/tickets/[id] one ticket: its status, and a follow-up conversation
+/admin        the response queue, gated on ADMIN_EMAILS
+```
+
+`lib/ticket-portal.ts` is the typed client for all three. It **resolves rather
+than rejects** on every failure, the same contract as `lib/ai-client.ts` — "you
+are not signed in" and "the service is down" are states the UI renders, not
+exceptions it catches. The error vocabulary is the whole set: `not_signed_in`,
+`forbidden`, `not_found`, `unreachable`, `unavailable`, `unknown`.
+
+**Status is the database's, and only an operator's.** The reporter's assistant is
+handed a ticket's status and asked what it *means*; it is never asked what the
+status *is*. The only writer is `PATCH /api/tickets/{id}/status`, reached from
+`/admin`. So a follow-up reply can never say "a crew is on the way" while the row
+still says `submitted` — the single worst output this backend could produce. A
+test pins that with a model that is explicitly instructed to lie about it.
+
+**Who may read a ticket is decided by the httpOnly session cookie**, and a
+signed-in reporter's address is re-derived server-side rather than read from the
+request. Ownership is never taken from a body field: an earlier version let a
+caller file a ticket as a victim and then read their whole queue. Wrong owner and
+missing ticket are both `404`, never `403`, so the sequential id space cannot be
+enumerated.
 
 ### One state tree
 
@@ -574,8 +762,24 @@ cards, and six scripted intent patterns.
   → composer is replaced by the review form once nothing is missing
   → edit anything by hand — a correction survives the next turn
   → Submit → POST /api/tickets → row in Postgres, TKT-000002
-  → mirrored into the report list at stage `submitted`
+  → mirrored into the report list at stage `submitted` (client state, dies on refresh)
   → receipt: an admin will review and contact you on the number you gave
+
+  later, at /tickets/[id]
+  → "has anyone come?" → assistant replies, and may only describe the row's status
+  → status itself is changed by a responder in /admin, never here
+```
+
+### Answer a ticket as an operator
+
+```
+/admin  (ADMIN_EMAILS allowlist)
+  → the whole queue, newest first, with reporter, location, support classes
+  → filter by status, and by kind of help (multi-select: medical + rescue = either)
+  → filters run in SQL; the header says "100 of 143" when the page is capped
+  → Move to under_review → dispatched → resolved → closed
+  → PATCH /api/tickets/{id}/status → the row
+  → the reporter's /tickets and any follow-up reply now see the new status
 ```
 
 ### Report a need → track it
@@ -613,7 +817,8 @@ SOS dock / strip / footer / header
 
 ## Accessibility
 
-Built to WCAG 2.2 AA, and verified in a real browser rather than assumed.
+Built to WCAG 2.2 AA by convention. There is no accessibility test, so these are
+invariants a change can break silently rather than things a suite will catch.
 
 - **Skip link** to `#main` — visually hidden until focused, then a 44px target.
 - **Visible focus everywhere**: a 2px `dispatch-600` ring with 2px white offset
@@ -628,25 +833,28 @@ Built to WCAG 2.2 AA, and verified in a real browser rather than assumed.
   keys + `Home`/`End` on tabs; `Enter` to send, `Shift+Enter` for newline;
   `Escape` closes the assistant, modal and menus; focus is trapped in dialogs.
 - **Live regions**: voice state announces via `aria-live` (`assertive` while
-  listening), toasts are `role="status"`, counters are labelled.
-- **Targets**: interactive elements are ≥44px; footer links get `py-1` padding
-  to clear 24px; a few links are visually small only because their hit area is
-  the entire card (confirmed by hit-testing).
+  listening), toasts are `role="status"`, the admin queue's result count is
+  `role="status"` so a filter change is announced, counters are labelled.
+- **Colour never carries meaning alone** — every status and support class pairs
+  its token with an icon and a text label. This is why the admin support filter
+  colours a chip with its own class token *and* keeps the icon and label.
+- **Targets**: the intent is ≥44px for interactive elements and ≥16px for inputs
+  (so iOS does not zoom on focus). Some filter chips fall short — the `/admin`
+  status chips are ~26px tall — so treat that number as a target rather than a
+  verified property. Zoom is never blocked (`maximumScale: 5`).
 - **User preferences**: `prefers-reduced-motion` collapses animation duration to
   0.01ms and iteration count to 1 (verified: 2.4s → 1e-05s); `forced-colors`
   switches to system colours with a 3px `Highlight` outline; `@media print`
   drops chrome and keeps the report.
-- **Zoom** is never blocked (`maximumScale: 5`), inputs are ≥16px so iOS doesn't
-  zoom on focus, and there is **zero horizontal overflow** from 390px to 1920px.
 
 ---
 
 ## Performance
 
 - **87.3 kB** shared First Load JS; heaviest route is 11.5 kB of route code.
-- 6 of the 7 page routes are statically prerendered; only `/reports/[id]` is
-  dynamic. The two `/api/ai/*` route handlers are server-side and add nothing to
-  the bundle.
+- 9 of the 11 page routes are statically prerendered; only `/reports/[id]` and
+  `/tickets/[id]` are dynamic. The `/api/ai/*` handlers are server-side and add
+  nothing to the bundle.
 - **No images, icon fonts, chart libraries, or map tiles.** Avatars are inline
   SVG data URIs, the map is pure CSS/SVG, sparklines are inline SVG, and the
   Google mark is inline SVG. The AI backend is a separate process, so adding
@@ -667,14 +875,17 @@ Built to WCAG 2.2 AA, and verified in a real browser rather than assumed.
 | `npm start` | Serve the production build |
 | `npm run lint` | ESLint via `next/core-web-vitals` |
 | `npm run typecheck` | `tsc --noEmit` |
+| `npm test` | Vitest, 39 tests across 2 files (the Live protocol rules and the capture worklet) |
+| `npm run test:watch` | The same, in watch mode |
 
 In `ai-backend/`:
 
 | Command | Action |
 | --- | --- |
-| `./dev.sh` | venv + deps + `uvicorn --reload` on :8000 (`PORT=… ` to move it) |
+| `./dev.sh` | venv + deps + `uvicorn --reload` on :8000 (`PORT=…` to move it) |
 | `docker compose up -d db` | Postgres 16 on :5432 |
-| `.venv/bin/python -m pytest app/tests -q` | 43 tests, no model calls, no quota |
+| `.venv/bin/python -m pytest app/tests -q` | 170 tests, no model calls, no quota |
+| `FLARE_LIVE_E2E=1 .venv/bin/python -m pytest app/tests/test_live_e2e.py -q` | 5 opt-in tests against the real Gemini Live service. Spends quota |
 
 ---
 
@@ -736,6 +947,32 @@ from re-introducing bugs that were already found and fixed.
     `ps -eo pid,args | grep next`, kill by PID, then `rm -rf .next && npm run
     build`.
 
+11. **A new filter needs the proxy allowlist.** `app/api/ai/admin/tickets/route.ts`
+    forwards an explicit set of query parameters and drops everything else, on
+    purpose, so a caller cannot reach a different upstream route. A filter missing
+    from that list does not error — the control renders, the request returns 200,
+    and the list comes back unfiltered, which reads as a backend bug.
+
+12. **The `draft` on the wire is snake_case, and the envelope is too.**
+    `reporter_name`, `victim_phone`, `support_needed`, `on_behalf_of_other` —
+    only `missing` / `next_questions` use camelCase `SlotName` values as *keys*.
+    `lib/ai-client.ts` translates it to camelCase TypeScript. A draft read with
+    the wrong casing does not throw; it renders an empty review form and offers a
+    complete-looking ticket with no summary.
+
+13. **Readiness is computed, never asked for.** `missing_slots()` in
+    `ai-backend/app/slots.py` is the single authority, duplicated in
+    `lib/ticket-intake.ts` so the form can update as the reporter types. Change
+    one, change both.
+
+14. **`SessionProvider` must wrap `AppProvider`.** `useSession` throws without a
+    provider rather than degrading, and `AppProvider` calls it — so the reverse
+    nesting takes down every route at once.
+
+15. **`middleware.ts` must not import `lib/auth.ts`.** Middleware runs on the edge
+    and `authOptions` pulls in the Google provider and Node crypto. Read
+    `process.env.NEXTAUTH_SECRET` directly instead.
+
 ---
 
 ## Wiring up a real backend
@@ -745,12 +982,13 @@ else is client state. To make the rest real:
 
 | Concern | Where it goes |
 | --- | --- |
-| Auth | Done — real Google OAuth, session-only, `/reports` gated. Next step is a users table so tickets can be attributed across devices |
-| Persistence | Back `REPORTS` with a database; the `Report` type in `lib/types.ts` is the schema. Tickets already persist — `createReportFromTicket` mirrors one into the report list |
+| Auth | Done — real Google OAuth, session-only. Next step is a users table so a reporter's tickets can be attributed across devices |
+| Persistence | Back `REPORTS` with a database; the `Report` type in `lib/types.ts` is the schema. **Tickets already persist** in Postgres and are the thing this app actually keeps |
 | Assistant | The live intake already runs ahead of the scripted replies. To make scripted replies the *only* fallback, delete `SCRIPTED_REPLIES` and let `scriptedReplyFor` throw |
-| Admin queue | `GET /api/tickets` and `PATCH /api/tickets/{id}/status` exist for this. There is no UI |
+| Admin queue | Done — `/admin` reads every filed ticket, filters by status and support type, and writes status. Still to come: assignment, bulk actions, and a role table behind `ADMIN_EMAILS` |
 | Triage/routing | `routeForSupportTypes()` and `DEPARTMENTS` already model the targets; the demo `getDepartment()` matcher is the part to replace |
-| Live updates | Feed `currentStage` / `stageTimestamps` over SSE or a websocket instead of the `advanceStage` demo control |
+| Live updates | Feed ticket status (and `currentStage`) over SSE or a websocket instead of re-fetching on filter change |
+| Rate limiting | The ticket **claim** flow proves ownership with a 10-digit phone against a guessable sequential reference. Practical online guessing is the only thing stopping a determined caller — revisit before this faces the public internet |
 | Geolocation | Replace the hardcoded coordinates in `SosDialog` with `navigator.geolocation` |
 | Emergency dispatch | `triggerSos` is the single seam to connect a real dispatch system |
 
@@ -758,12 +996,15 @@ else is client state. To make the rest real:
 
 ## Accessibility & safety notes
 
-FLARE is **not approved for real incident response**. The reporting, tracking
-and SOS surfaces are demonstration interfaces: they do not contact emergency
-services and do not share your location. The one part that reaches a real
-service is the AI intake, which talks to Gemini and writes tickets to a local
-database — useful for evaluating the flow, not a substitute for a dispatch
-system.
+FLARE is **not approved for real incident response**. The report-tracking and SOS
+surfaces are demonstration interfaces: they do not contact emergency services
+and do not share your location. What is real is the AI intake (it talks to
+Gemini and writes tickets to a local database), Google sign-in, and the
+`/admin` queue that reads and updates those tickets — useful for evaluating the
+flow, not a substitute for a dispatch system.
+
+The tickets themselves are real people describing a real emergency, so treat the
+demo database accordingly.
 
 In a real emergency, contact your local emergency number first. The assistant
 says so too, on every turn that suggests an immediate-danger instruction.
