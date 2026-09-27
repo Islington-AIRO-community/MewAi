@@ -92,7 +92,7 @@ curl localhost:8000/api/ready
 ```
 
 ```bash
-.venv/bin/python -m pytest app/tests -q   # 153 tests, no model calls, no quota
+.venv/bin/python -m pytest app/tests -q   # 170 tests, no model calls, no quota
 ```
 
 ## Endpoints
@@ -103,13 +103,15 @@ curl localhost:8000/api/ready
 | `GET` | `/api/ready` | Readiness, with per-dependency detail. |
 | `POST` | `/api/chat/message` | One assistant turn. Returns the draft, per-slot state, what is still missing, and up to two follow-up questions. |
 | `POST` | `/api/tickets` | Create a ticket. Re-validates every required attribute first and answers `422` naming exactly what is missing. |
-| `GET` | `/api/tickets` | List, newest first. |
+| `GET` | `/api/tickets` | List, newest first. Accepts `?status=`, a repeatable `?support=` (any-of), `?limit=` and `?offset=`. |
 | `GET` | `/api/tickets/{id}` | Fetch one. |
 | `PATCH` | `/api/tickets/{id}/status` | Move it through the review queue. |
 | `GET` | `/api/tickets/stats` | Counts by status, urgency and support class. |
 
-The admin list/patch endpoints exist so a queue can be built on them later. There
-is no admin UI yet.
+The admin endpoints are reached through the Next.js proxy, which is their only
+access control — this service authenticates nothing itself, so it must stay on a
+private network. `/admin` in the front end is the queue built on the list and
+status endpoints.
 
 ## How a turn works
 
