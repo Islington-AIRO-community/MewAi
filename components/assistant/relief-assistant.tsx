@@ -14,7 +14,9 @@ import {
 import type { ActionCard, VoiceState } from '@/lib/types';
 import { cn, truncate } from '@/lib/utils';
 import { useApp } from '@/lib/store';
+import type { AiChatApi } from '@/lib/use-ai-chat';
 import { usePrefersReducedMotion } from '@/lib/hooks';
+import { useLiveVoice } from '@/lib/live-voice/use-live-voice';
 import { Button } from '@/components/ui/button';
 import { TabList, TabPanel, TabsProvider } from '@/components/ui/tabs';
 import { VoiceOrb } from './voice-waveform';
@@ -40,27 +42,50 @@ export function ReliefAssistant({
   defaultOpen = false,
   className,
   onOpenChange,
+  ai,
 }: {
   variant?: 'floating' | 'fullscreen';
   defaultMode?: Mode;
   defaultOpen?: boolean;
   className?: string;
   onOpenChange?: (open: boolean) => void;
+  /**
+   * The live intake, owned by the mounting surface rather than created here.
+   *
+   * The hook is a required prop rather than an internal one because the surfaces
+   * that can *also* start a conversation — the /chat quick phrases, the
+   * `?intent=` deep link, the floating launcher in the shell — must drive the
+   * same intake instance, or a ticket draft started in one place would not be
+   * the draft the other place is reviewing.
+   */
+  ai: AiChatApi;
 }) {
-  const { messages, actionCards, isResponding, sendMessage, confirmActionCard, dismissActionCard } =
-    useApp();
+  const { messages, actionCards, confirmActionCard, dismissActionCard } = useApp();
   const pathname = usePathname();
   const reduced = usePrefersReducedMotion();
 
   const [open, setOpen] = React.useState(defaultOpen);
   const [mode, setMode] = React.useState<Mode>(defaultMode);
-  const [voiceState, setVoiceState] = React.useState<VoiceState>('idle');
-  const [handsFree, setHandsFree] = React.useState(false);
-  const [transcript, setTranscript] = React.useState('');
   const [hasUnread, setHasUnread] = React.useState(true);
   const [expanded, setExpanded] = React.useState(false);
   const panelRef = React.useRef<HTMLDivElement>(null);
   const closeRef = React.useRef<HTMLButtonElement>(null);
+
+  // A real Gemini Live session, not a scripted one.
+  //
+  // This is mounted unconditionally rather than inside the voice tab, so
+  // switching tabs does not tear down a socket and a microphone. A session that
+  // survives a tab change is also the honest behaviour: the microphone is open
+  // for the whole conversation, and the reporter can go and read the resources
+  // page while still being heard.
+  const voice = useLiveVoice();
+
+  // Always the latest `ingestTranscript`. Handing a finished conversation to the
+  // intake is a one-shot action rather than a loop, so this is read once, but
+  // through a ref so a draft edit mid-conversation cannot change which function
+  // a pending click resolves to.
+  const ingestRef = React.useRef(ai.ingestTranscript);
+  ingestRef.current = ai.ingestTranscript;
 
   const isFullscreen = variant === 'fullscreen';
   const show = isFullscreen ? true : open;
@@ -125,77 +150,64 @@ export function ReliefAssistant({
     return () => document.removeEventListener('keydown', onKey);
   }, [open, isFullscreen]);
 
-  /* ---------------- Voice simulation ---------------- */
+  /* ---------------- Real voice session ---------------- */
 
   const startVoice = React.useCallback(() => {
-    setVoiceState('connecting');
-    window.setTimeout(() => setVoiceState('listening'), 700);
-  }, []);
+    void voice.start();
+  }, [voice]);
 
   const stopVoice = React.useCallback(() => {
-    setVoiceState('idle');
-    setTranscript('');
-  }, []);
+    voice.stop();
+  }, [voice]);
 
   const toggleMic = React.useCallback(() => {
-    setVoiceState((prev) => {
-      if (prev === 'muted') return 'listening';
-      if (prev === 'listening' || prev === 'speaking' || prev === 'thinking') {
-        setTranscript('');
-        return 'muted';
-      }
-      // idle / error -> start a fresh session
-      setTimeout(() => setVoiceState('listening'), 400);
-      return 'connecting';
-    });
-  }, []);
+    voice.setMuted(!voice.muted);
+  }, [voice]);
 
-  // Simulated turn-taking so the voice UI demonstrates every state.
-  React.useEffect(() => {
-    if (voiceState !== 'listening') return;
-    const lines = [
-      'There are three of us in the basement of Fairmount Apartments',
-      'The water is coming up fast and my partner cannot walk',
-      'We are on Alder Street, Eastvale, block C',
-    ];
-    let i = 0;
-    const typeNext = () => {
-      const line = lines[i % lines.length];
-      let c = 0;
-      setTranscript('');
-      const type = window.setInterval(() => {
-        c += 3;
-        setTranscript(line.slice(0, c));
-        if (c >= line.length) {
-          window.clearInterval(type);
-          i += 1;
-          if (i === 1) {
-            window.setTimeout(() => {
-              setVoiceState('thinking');
-              window.setTimeout(() => setVoiceState('speaking'), 900);
-            }, 500);
-          } else {
-            window.setTimeout(() => {
-              setVoiceState('speaking');
-              sendMessage(line, { viaVoice: true });
-            }, 600);
-          }
-        }
-      }, 26);
-    };
-    typeNext();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [voiceState]);
+  /**
+   * The mic button in the text composer.
+   *
+   * With a real session there is a third case the simulation never had: no
+   * session is running, so there is no microphone to mute. Toggling `muted`
+   * then would be a button that visibly does nothing, so this starts a session
+   * and moves to the voice tab instead — which is what someone pressing a mic
+   * next to a text box is asking for.
+   */
+  const micFromChat = React.useCallback(() => {
+    if (voice.status === 'idle' || voice.status === 'error') {
+      setMode('voice');
+      void voice.start();
+      return;
+    }
+    voice.setMuted(!voice.muted);
+  }, [voice]);
 
-  // Return to listening after the assistant finishes speaking.
-  React.useEffect(() => {
-    if (voiceState !== 'speaking') return;
-    const t = window.setTimeout(() => {
-      setTranscript('');
-      setVoiceState('listening');
-    }, 2600);
-    return () => window.clearTimeout(t);
-  }, [voiceState]);
+  /**
+   * Turn the spoken conversation into a ticket draft.
+   *
+   * The session is closed first, deliberately. Keeping the microphone open
+   * while the transcript is being sent would mean the reporter keeps talking
+   * into a conversation the intake has already stopped listening to, and the
+   * turns that arrived in between would be silently dropped — they would be in
+   * `turns` but not in the request. Closing first makes the boundary explicit:
+   * everything said up to this point goes up, nothing after it does.
+   */
+  const submitVoice = React.useCallback(() => {
+    const spoken = voice.turns;
+    if (spoken.length === 0) return;
+    voice.stop();
+    void ingestRef.current(spoken);
+  }, [voice]);
+
+  const handleSend = React.useCallback(
+    (text: string) => {
+      // Route through the live intake: it drives the backend and advances the
+      // ticket draft. The store's scripted replies are the fallback underneath,
+      // so a backend outage degrades instead of breaking.
+      void ai.send(text);
+    },
+    [ai],
+  );
 
   const handleConfirm = React.useCallback(
     (card: ActionCard) => {
@@ -209,13 +221,6 @@ export function ReliefAssistant({
       dismissActionCard(card.id);
     },
     [dismissActionCard],
-  );
-
-  const handleSend = React.useCallback(
-    (text: string) => {
-      sendMessage(text);
-    },
-    [sendMessage],
   );
 
   /* ---------------- Content ---------------- */
@@ -318,11 +323,35 @@ export function ReliefAssistant({
   const handleModeChange = React.useCallback(
     (v: string) => {
       setMode(v as Mode);
-      if (v === 'voice' && voiceState === 'idle') startVoice();
-      if (v === 'chat') stopVoice();
+      // Starting a session is an explicit gesture: a voice tab that opened a
+      // microphone on its own would record someone who only wanted to read
+      // something. Leaving the tab does *not* stop it — the reporter may be
+      // looking at the resources page mid-sentence, and the microphone staying
+      // open is the whole point of an always-on session.
+      if (v === 'voice' && voice.status === 'idle') startVoice();
     },
-    [voiceState, startVoice, stopVoice],
+    [voice.status, startVoice],
   );
+
+  /** The most recent thing the reporter said, for the caption under the orb. */
+  const latestSpoken = React.useMemo(() => {
+    for (let i = voice.turns.length - 1; i >= 0; i -= 1) {
+      if (voice.turns[i].role === 'user') return voice.turns[i].text;
+    }
+    return '';
+  }, [voice.turns]);
+
+  const visualVoiceState: VoiceState = voice.failure
+    ? 'error'
+    : voice.status === 'idle'
+      ? 'idle'
+      : voice.status === 'connecting' || voice.status === 'reconnecting'
+        ? 'connecting'
+        : voice.assistantSpeaking
+          ? 'speaking'
+          : voice.muted
+            ? 'muted'
+            : 'listening';
 
   const body = (
     <>
@@ -330,26 +359,31 @@ export function ReliefAssistant({
         <ChatPanel
           messages={messages}
           actionCards={actionCards}
-          isResponding={isResponding}
+          isResponding={ai.busy}
           onSend={handleSend}
           onConfirmCard={handleConfirm}
           onDismissCard={handleDismiss}
-          voiceState={voiceState}
-          onToggleMic={toggleMic}
+          voiceState={visualVoiceState}
+          onToggleMic={micFromChat}
+          ai={ai}
         />
       </TabPanel>
 
       <TabPanel value="voice" className="flex min-h-0 flex-1 flex-col">
         <VoicePanel
-          state={voiceState}
-          transcript={transcript}
-          handsFree={handsFree}
+          status={voice.status}
+          assistantSpeaking={voice.assistantSpeaking}
+          muted={voice.muted}
+          failure={voice.failure}
+          transcript={latestSpoken}
+          level={voice.level}
+          canSubmit={voice.turns.length > 0}
           onToggleMic={toggleMic}
-          onToggleHandsFree={() => setHandsFree((v) => !v)}
           onStop={() => {
             stopVoice();
             setMode('chat');
           }}
+          onSubmit={submitVoice}
           onSwitchToText={() => {
             stopVoice();
             setMode('chat');
@@ -399,7 +433,7 @@ export function ReliefAssistant({
               'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dispatch-600 focus-visible:ring-offset-2',
             )}
           >
-            <VoiceOrb state={voiceState === 'idle' ? 'idle' : voiceState} size={56} />
+            <VoiceOrb state={visualVoiceState} size={56} />
             {hasUnread && (
               <span
                 className="absolute -right-0.5 -top-0.5 size-3.5 rounded-full bg-emergency-500 ring-[3px] ring-white"

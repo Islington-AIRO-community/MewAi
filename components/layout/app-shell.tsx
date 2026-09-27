@@ -7,6 +7,8 @@ import { FileText, LayoutDashboard, LifeBuoy, MessageSquareText } from 'lucide-r
 import { cn } from '@/lib/utils';
 import { useApp } from '@/lib/store';
 import { AppProvider } from '@/lib/store';
+import { AiChatProvider, useAiChatInstance } from '@/lib/ai-chat-context';
+import { SessionProvider } from 'next-auth/react';
 import { ToastProvider, useToast } from '@/components/ui/toast';
 import { SiteHeader } from './site-header';
 import { SosFloatingBar } from '@/components/emergency/sos-floating-bar';
@@ -27,19 +29,41 @@ const MOBILE_NAV = [
  */
 export function AppShell({ children }: { children: React.ReactNode }) {
   return (
-    <AppProvider>
-      <ToastProvider>
-        <Shell>{children}</Shell>
-      </ToastProvider>
-    </AppProvider>
+    // Order is load-bearing. `useSession` throws if it is not inside a
+    // SessionProvider, and AppProvider calls it to derive the session user, so
+    // SessionProvider has to stay on the *outside*. Swapping these two takes
+    // down every route at once rather than degrading one component.
+    //
+    // `AiChatProvider` is inside `AppProvider` for the same reason, and it
+    // wraps every route so the intake survives navigation. It has to be a single
+    // instance for the whole tree: the floating launcher on `/dashboard` and the
+    // full-page assistant on `/chat` are the same conversation, and two
+    // instances would mean two drafts, two session ids and two divergent
+    // transcripts for one reporter.
+    <SessionProvider>
+      <AppProvider>
+        <ToastProvider>
+          <AiChatProvider>
+            <Shell>{children}</Shell>
+          </AiChatProvider>
+        </ToastProvider>
+      </AppProvider>
+    </SessionProvider>
   );
 }
 
 function Shell({ children }: { children: React.ReactNode }) {
-  const [sosOpen, setSosOpen] = React.useState(false);
-  const { reports, actionCards } = useApp();
+  // `sosOpen` lives in the store rather than here, so any surface can raise an
+  // emergency and not only the four this shell owns. See `AppContextValue`.
+  const { reports, actionCards, sosOpen, openSos, closeSos } = useApp();
   const { toast } = useToast();
   const pathname = usePathname();
+
+  // The conversation's single intake, mounted once in `AppShell`. The floating
+  // assistant's draft therefore survives navigating between routes (state is
+  // in-memory, so a reload still resets it — see AGENTS.md) and is the *same*
+  // draft `/chat` fills in.
+  const ai = useAiChatInstance();
 
   const pendingCards = actionCards.filter((c) => c.status === 'pending').length;
   const activeCount = reports.filter((r) => r.currentStage !== 'resolved').length;
@@ -55,12 +79,20 @@ function Shell({ children }: { children: React.ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingCards]);
 
+  /**
+   * Fires only after a ticket row exists — the dialog owns the sending and the
+   * failure states, and this is told when it genuinely succeeded.
+   *
+   * "Nearest units are en route" was removed: nothing dispatches automatically.
+   * The ticket is in the queue awaiting triage, and that is the whole of what
+   * can be claimed at this point.
+   */
   const onSosDispatched = React.useCallback(
     (reportId: string) => {
       toast({
         tone: 'critical',
         title: 'Emergency alert sent',
-        description: `${reportCodeFromId(reportId)} created. Nearest units are en route.`,
+        description: `${reportCodeFromId(reportId)} is in the response queue for triage.`,
       });
     },
     [toast],
@@ -72,28 +104,28 @@ function Shell({ children }: { children: React.ReactNode }) {
         Skip to main content
       </a>
 
-      <SiteHeader onOpenSos={() => setSosOpen(true)} />
+      <SiteHeader onOpenSos={openSos} />
 
       <main id="main" tabIndex={-1} className="flex-1 outline-none">
         {children}
       </main>
 
-      <SiteFooter onOpenSos={() => setSosOpen(true)} />
+      <SiteFooter onOpenSos={openSos} />
 
       {/* Persistent quick access.
           The assistant dock sits directly above the SOS bar (≈6.5rem tall on
           desktop) so the two never overlap. */}
       <div className="fixed bottom-[calc(env(safe-area-inset-bottom)+7rem)] right-4 z-[61] hidden flex-col items-end sm:flex">
-        <ReliefAssistant variant="floating" />
+        <ReliefAssistant variant="floating" ai={ai} />
       </div>
 
-      <SosFloatingBar onOpenSos={() => setSosOpen(true)} unreadCount={activeCount} />
+      <SosFloatingBar onOpenSos={openSos} unreadCount={activeCount} />
 
       <MobileTabBar pathname={pathname} />
 
       <SosDialog
         open={sosOpen}
-        onClose={() => setSosOpen(false)}
+        onClose={closeSos}
         onDispatched={onSosDispatched}
       />
     </div>
@@ -141,6 +173,7 @@ function MobileTabBar({ pathname }: { pathname: string }) {
 }
 
 function SiteFooter({ onOpenSos }: { onOpenSos: () => void }) {
+  const { user } = useApp();
   return (
     <footer className="no-print mt-16 border-t border-navy-200 bg-white pb-[calc(env(safe-area-inset-bottom)+var(--tabbar-h)+var(--sos-strip-h)+0.75rem)] sm:pb-10">
       <div className="container py-10">
@@ -168,6 +201,10 @@ function SiteFooter({ onOpenSos }: { onOpenSos: () => void }) {
               links={[
                 { label: 'Dashboard', href: '/dashboard' },
                 { label: 'My reports', href: '/reports' },
+                /* Only when there is an account to attach them to. `/tickets` is
+                   gated, so a signed-out visitor gets a link that throws them
+                   into a Google round-trip to reach an empty list. */
+                ...(user ? [{ label: 'My tickets', href: '/tickets' as const }] : []),
                 { label: 'Sign in', href: '/login' },
               ]}
             />

@@ -3,7 +3,7 @@
 import * as React from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
-  Hand,
+  CheckCheck,
   Keyboard,
   Loader2,
   Mic,
@@ -11,49 +11,126 @@ import {
   PhoneOff,
   Radio,
   Sparkles,
-  Square,
-  Volume2,
 } from 'lucide-react';
 import type { VoiceState } from '@/lib/types';
+import type { LiveVoiceFailure, LiveVoiceStatus } from '@/lib/live-voice/use-live-voice';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { VoiceWaveform } from './voice-waveform';
 import { VOICE_PROMPTS } from '@/lib/mock-data';
 
-const STATE_COPY: Record<VoiceState, { label: string; hint: string; tone: 'navy' | 'emergency' | 'alert' | 'relief' }> = {
-  idle: { label: 'Voice mode ready', hint: 'Tap the microphone to start talking', tone: 'navy' },
-  connecting: { label: 'Connecting…', hint: 'Securing an encrypted voice channel', tone: 'navy' },
-  listening: { label: 'Listening', hint: 'Speak naturally — I will confirm the address before dispatching', tone: 'emergency' },
-  thinking: { label: 'Processing', hint: 'Matching your request to a response team', tone: 'navy' },
-  speaking: { label: 'Speaking', hint: 'Confirm the details I read back to you', tone: 'navy' },
-  muted: { label: 'Muted', hint: 'The microphone is off. Unmute when you are ready.', tone: 'alert' },
-  error: { label: 'Voice unavailable', hint: 'Falling back to text chat so you are never blocked', tone: 'alert' },
+/**
+ * `muted` is here because the waveform renders it, and a flat line is a true
+ * signal that the microphone is off — better than a waveform that keeps moving
+ * on a muting it does not know about. `thinking` is absent because a real
+ * session never enters it: the server decides when to speak, so the gap between
+ * the reporter finishing and the assistant starting is silence, and rendering a
+ * spinner for it would be inventing latency that does not exist.
+ */
+const STATE_COPY: Record<
+  Exclude<VoiceState, 'thinking'>,
+  { label: string; hint: string; tone: 'navy' | 'emergency' | 'alert' | 'relief' }
+> = {
+  idle: {
+    label: 'Voice mode ready',
+    hint: 'Tap the microphone to start talking',
+    tone: 'navy',
+  },
+  connecting: {
+    label: 'Connecting…',
+    hint: 'Securing an encrypted voice channel',
+    tone: 'navy',
+  },
+  listening: {
+    label: 'Listening',
+    hint: 'Speak naturally — I will confirm the address before dispatching',
+    tone: 'emergency',
+  },
+  speaking: {
+    label: 'Speaking',
+    hint: 'Confirm the details I read back to you',
+    tone: 'navy',
+  },
+  muted: {
+    label: 'Microphone off',
+    hint: 'You can still hear me. Unmute when you are ready to speak.',
+    tone: 'alert',
+  },
+  error: {
+    label: 'Voice unavailable',
+    hint: 'Falling back to text chat so you are never blocked',
+    tone: 'alert',
+  },
 };
 
 export function VoicePanel({
-  state,
+  status,
+  assistantSpeaking,
+  muted,
+  failure,
   transcript,
-  handsFree,
+  level,
+  canSubmit,
   onToggleMic,
-  onToggleHandsFree,
   onStop,
+  onSubmit,
   onSwitchToText,
   className,
 }: {
-  state: VoiceState;
-  /** Live partial transcript from the last utterance. */
+  status: LiveVoiceStatus;
+  /** True while the assistant's audio is playing. */
+  assistantSpeaking: boolean;
+  /** The microphone is off. The session keeps running. */
+  muted: boolean;
+  /** Set when voice cannot continue. Copy is ready to render as-is. */
+  failure: LiveVoiceFailure | null;
+  /** What the reporter said on their most recent completed turn. */
   transcript: string;
-  handsFree: boolean;
+  /** Mic loudness 0..1, for the waveform. */
+  level: number;
+  /** True once there is a spoken turn worth turning into a ticket. */
+  canSubmit: boolean;
   onToggleMic: () => void;
-  onToggleHandsFree: () => void;
   onStop: () => void;
+  /** Hand the spoken conversation to the intake. */
+  onSubmit: () => void;
   onSwitchToText: () => void;
   className?: string;
 }) {
+  // The visual vocabulary is still `VoiceState`, because the waveform is
+  // built around it. The mapping is the honest one: a real session has fewer
+  // states than the simulation did, because the server decides when to speak
+  // and the microphone never closes. There is no "thinking" — the gap between
+  // the reporter finishing and the assistant starting is silence, and inventing
+  // a state for it would be inventing latency that does not exist.
+  const state: VoiceState = failure
+    ? 'error'
+    : status === 'idle'
+      ? 'idle'
+      : status === 'connecting' || status === 'reconnecting'
+        ? 'connecting'
+        : assistantSpeaking
+          ? 'speaking'
+          : muted
+            ? 'muted'
+            : 'listening';
+
   const copy = STATE_COPY[state];
-  const muted = state === 'muted';
-  const live = state === 'listening' || state === 'speaking' || state === 'thinking';
+  const live = status === 'listening' || status === 'reconnecting';
+  const busy = status === 'connecting';
+
+  // The failure message is rendered once, in the block at the foot of the
+  // panel. It used to be *also* used as the hint here, so a single failure
+  // printed the same sentence two or three times — which reads as several
+  // different errors, and is exactly the wrong impression to give someone who
+  // needs to know whether help is still available. The hint carries the
+  // instruction; the block carries the reason.
+  const hint = failure
+    ? 'Nothing you said has been lost.'
+    : status === 'reconnecting'
+      ? 'Reconnecting — your conversation is saved'
+      : copy.hint;
 
   return (
     <div
@@ -85,7 +162,7 @@ export function VoicePanel({
               state === 'listening' ? 'bg-emergency-500' : 'bg-white/10',
             )}
           >
-            {state === 'connecting' || state === 'thinking' ? (
+            {busy ? (
               <Loader2 className="size-4 animate-spin" aria-hidden="true" />
             ) : (
               <Sparkles className="size-4" aria-hidden="true" />
@@ -93,11 +170,13 @@ export function VoicePanel({
           </span>
           <div className="min-w-0">
             <p className="truncate text-sm font-bold">{copy.label}</p>
-            <p className="truncate text-2xs text-white/50">{copy.hint}</p>
+            <p className="truncate text-2xs text-white/50">{hint}</p>
           </div>
         </div>
 
         <div className="flex shrink-0 items-center gap-2">
+          {/* The socket is a direct `wss://` to Google, so this is a true
+              statement rather than decoration: audio never touches our server. */}
           <Badge tone="glass" size="sm">
             <Radio className="size-3" aria-hidden="true" />
             Encrypted
@@ -117,14 +196,20 @@ export function VoicePanel({
       {/* Waveform stage */}
       <div className="relative flex min-h-0 flex-1 flex-col items-center justify-center px-5 py-6">
         <div className="w-full max-w-md">
-          <VoiceWaveform state={state} className="h-24" />
+          <VoiceWaveform state={state} amplitude={0.35 + level * 3.2} className="h-24" />
 
           <p
             role="status"
             aria-live={state === 'listening' ? 'assertive' : 'polite'}
             className="mt-4 text-center text-sm font-semibold text-white/80"
           >
-            {state === 'listening' ? 'I am listening…' : copy.hint}
+            {muted
+              ? 'Microphone off'
+              : state === 'listening'
+                ? assistantSpeaking
+                  ? 'I am speaking — you can interrupt me at any time'
+                  : 'I am listening…'
+                : hint}
           </p>
 
           {/* Live transcript */}
@@ -143,7 +228,7 @@ export function VoicePanel({
                   </p>
                   <p className="mt-1.5 text-[15px] leading-relaxed text-white/95">
                     {transcript}
-                    {state === 'listening' && (
+                    {state === 'listening' && !muted && (
                       <span
                         className="ml-0.5 inline-block h-4 w-0.5 animate-pulse bg-emergency-400 align-middle"
                         aria-hidden="true"
@@ -159,7 +244,7 @@ export function VoicePanel({
                   exit={{ opacity: 0 }}
                   className="text-center text-xs leading-relaxed text-white/40"
                 >
-                  {VOICE_PROMPTS[state === 'listening' ? 2 : 0]}
+                  {status === 'idle' ? VOICE_PROMPTS[0] : copy.hint}
                 </motion.p>
               )}
             </AnimatePresence>
@@ -169,110 +254,79 @@ export function VoicePanel({
 
       {/* Controls */}
       <div className="relative shrink-0 border-t border-white/10 bg-navy-950/60 px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-4 backdrop-blur-xl">
-        <div className="mx-auto flex max-w-md items-center justify-center gap-3">
-          {/* Mute */}
-          <button
-            type="button"
-            onClick={onToggleMic}
-            aria-pressed={muted}
-            aria-label={muted ? 'Unmute microphone' : 'Mute microphone'}
-            className={cn(
-              'grid size-14 shrink-0 place-items-center rounded-full transition-all duration-200',
-              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-navy-950',
-              muted
-                ? 'bg-alert-500 text-white hover:bg-alert-600'
-                : 'bg-white/10 text-white ring-1 ring-inset ring-white/20 hover:bg-white/15',
-            )}
-          >
-            {muted ? <MicOff className="size-6" aria-hidden="true" /> : <Mic className="size-6" aria-hidden="true" />}
-          </button>
-
-          {/* Primary talk / stop */}
-          <button
-            type="button"
-            onClick={live ? onStop : onToggleMic}
-            aria-label={live ? 'Stop listening' : 'Start talking'}
-            className={cn(
-              'group relative grid size-[4.5rem] shrink-0 place-items-center rounded-full transition-all duration-200',
-              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-navy-950',
-              live
-                ? 'bg-emergency-500 text-white hover:bg-emergency-600'
-                : 'bg-relief-500 text-white hover:bg-relief-600',
-            )}
-          >
-            {live && !state.includes('speak') && (
-              <span
-                className="absolute inset-0 animate-pulse-ring rounded-full bg-emergency-400/50"
-                aria-hidden="true"
-              />
-            )}
-            {live ? (
-              <Square className="size-6 fill-current" aria-hidden="true" />
-            ) : (
-              <Volume2 className="size-7" aria-hidden="true" />
-            )}
-          </button>
-
-          {/* Hands-free */}
-          <button
-            type="button"
-            onClick={onToggleHandsFree}
-            aria-pressed={handsFree}
-            aria-label={handsFree ? 'Turn off hands-free mode' : 'Turn on hands-free mode'}
-            className={cn(
-              'grid size-14 shrink-0 place-items-center rounded-full transition-all duration-200',
-              'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-navy-950',
-              handsFree
-                ? 'bg-dispatch-500 text-white hover:bg-dispatch-600'
-                : 'bg-white/10 text-white ring-1 ring-inset ring-white/20 hover:bg-white/15',
-            )}
-          >
-            <Hand className="size-6" aria-hidden="true" />
-          </button>
-        </div>
-
-        {/* Hands-free status */}
-        <div className="mx-auto mt-4 max-w-md">
-          <AnimatePresence mode="wait">
-            {handsFree ? (
-              <motion.div
-                key="hf"
-                initial={{ opacity: 0, y: 6 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0 }}
-                className="flex items-center justify-center gap-2 rounded-xl border border-dispatch-400/30 bg-dispatch-500/10 px-3 py-2.5"
+        <div className="mx-auto flex max-w-md flex-col items-center gap-4">
+          {failure ? (
+            <>
+              <p className="text-center text-xs leading-relaxed text-alert-200">
+                {failure.message}
+              </p>
+              <Button variant="primary" size="lg" onClick={onSwitchToText} className="w-full">
+                <Keyboard className="size-4" aria-hidden="true" />
+                Continue in text chat
+              </Button>
+            </>
+          ) : (
+            <>
+              {/* There is no push-to-talk button, and the reason matters.
+                  The microphone is open for the whole session and the server
+                  decides where a turn ends, so a button that looked like
+                  "hold to speak" would be describing a control that does
+                  nothing. Mute is the only thing the reporter needs mid-session,
+                  and "I'm done" is the one action that ends it. */}
+              <Button
+                variant="primary"
+                size="lg"
+                onClick={onSubmit}
+                disabled={!canSubmit}
+                className="w-full"
               >
-                <span className="relative flex size-2" aria-hidden="true">
-                  <span className="absolute inset-0 animate-pulse-ring rounded-full bg-dispatch-300" />
-                  <span className="relative size-2 rounded-full bg-dispatch-300" />
-                </span>
-                <p className="text-xs font-semibold text-dispatch-200">
-                  Hands-free is on — say{' '}
-                  <span className="font-bold text-white">&ldquo;help&rdquo;</span> any time
-                </p>
-              </motion.div>
-            ) : (
-              <motion.div
-                key="off"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                className="flex items-center justify-center gap-3"
-              >
-                <p className="text-xs text-white/45">Prefer typing?</p>
+                <CheckCheck className="size-4" aria-hidden="true" />
+                {canSubmit
+                  ? 'I have told you everything'
+                  : 'Nothing heard yet'}
+              </Button>
+
+              <div className="flex items-center justify-center gap-3">
                 <button
                   type="button"
-                  onClick={onSwitchToText}
-                  className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs font-bold text-white underline-offset-4 hover:bg-white/10 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
+                  onClick={onToggleMic}
+                  aria-pressed={muted}
+                  aria-label={muted ? 'Unmute microphone' : 'Mute microphone'}
+                  className={cn(
+                    'grid size-14 shrink-0 place-items-center rounded-full transition-all duration-200',
+                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-navy-950',
+                    muted
+                      ? 'bg-alert-500 text-white hover:bg-alert-600'
+                      : 'bg-white/10 text-white ring-1 ring-inset ring-white/20 hover:bg-white/15',
+                  )}
                 >
-                  <Keyboard className="size-3.5" aria-hidden="true" />
-                  Switch to text chat
+                  {muted ? (
+                    <MicOff className="size-6" aria-hidden="true" />
+                  ) : (
+                    <Mic className="size-6" aria-hidden="true" />
+                  )}
                 </button>
-              </motion.div>
-            )}
-          </AnimatePresence>
+
+                <button
+                  type="button"
+                  onClick={onStop}
+                  aria-label="End voice session"
+                  className={cn(
+                    'grid size-14 shrink-0 place-items-center rounded-full transition-all duration-200',
+                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-navy-950',
+                    live
+                      ? 'bg-emergency-500 text-white hover:bg-emergency-600'
+                      : 'bg-white/10 text-white ring-1 ring-inset ring-white/20 hover:bg-white/15',
+                  )}
+                >
+                  <PhoneOff className="size-6" aria-hidden="true" />
+                </button>
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>
   );
 }
+

@@ -3,6 +3,7 @@
 import * as React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { signOut } from 'next-auth/react';
 import {
   LayoutDashboard,
   LifeBuoy,
@@ -15,6 +16,7 @@ import {
   FileText,
   ChevronDown,
   MessageSquareText,
+  Ticket,
 } from 'lucide-react';
 import { cn, initials } from '@/lib/utils';
 import { useApp } from '@/lib/store';
@@ -31,12 +33,23 @@ interface NavItem {
   label: string;
   icon: typeof LayoutDashboard;
   shortLabel: string;
+  /**
+   * Hidden from signed-out visitors.
+   *
+   * `/tickets` is gated in `middleware.ts`, so showing it to someone with no
+   * session means a dead link that bounces to a Google round-trip. That is the
+   * wrong first impression for the one page a returning reporter opens to check
+   * whether help is coming, and the wrong thing to ask of someone who is here
+   * during a disaster and has no account.
+   */
+  signedInOnly?: boolean;
 }
 
 const NAV: NavItem[] = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, shortLabel: 'Home' },
   { href: '/reports', label: 'My Reports', icon: FileText, shortLabel: 'Reports' },
   { href: '/chat', label: 'AI Assistant', icon: MessageSquareText, shortLabel: 'Assist' },
+  { href: '/tickets', label: 'My Tickets', icon: Ticket, shortLabel: 'Tickets', signedInOnly: true },
   { href: '/resources', label: 'Resources', icon: LifeBuoy, shortLabel: 'Help' },
 ];
 
@@ -46,7 +59,7 @@ function isActive(pathname: string, href: string) {
 
 export function SiteHeader({ onOpenSos }: { onOpenSos: () => void }) {
   const pathname = usePathname();
-  const { user, signOut } = useApp();
+  const { user } = useApp();
   const [menuOpen, setMenuOpen] = React.useState(false);
   const close = React.useCallback(() => setMenuOpen(false), []);
   const menuRef = useDismissable<HTMLDivElement>(menuOpen, close);
@@ -78,7 +91,7 @@ export function SiteHeader({ onOpenSos }: { onOpenSos: () => void }) {
           {/* Desktop nav */}
           <nav aria-label="Primary" className="ml-4 hidden lg:block">
             <ul className="flex items-center gap-1">
-              {NAV.map((item) => {
+              {NAV.filter((item) => !item.signedInOnly || user).map((item) => {
                 const active = isActive(pathname, item.href);
                 return (
                   <li key={item.href}>
@@ -128,6 +141,16 @@ export function SiteHeader({ onOpenSos }: { onOpenSos: () => void }) {
               srLabel="Open SOS emergency distress reporting"
             />
 
+            {/* Branches on `user` alone, which is null while the session is
+                still loading as well as when signed out. Rendering nothing
+                during loading was tried and is worse: because these routes are
+                statically prerendered, the prerendered HTML always contains the
+                "Sign in" button, so hiding it during loading makes that button
+                blink out and back on *every* page load. This way the signed-out
+                case (the common one) is stable, and a signed-in visitor sees
+                the button swap to the account menu once the cookie is read.
+                Eliminating that swap entirely would mean server-rendering the
+                session on every route, i.e. making them all dynamic. */}
             {user ? (
               <div className="relative" ref={menuRef}>
                 <button
@@ -173,6 +196,7 @@ export function SiteHeader({ onOpenSos }: { onOpenSos: () => void }) {
                     </div>
 
                     <div className="p-1.5">
+                      <MenuLink href="/tickets" icon={Ticket} label="My tickets" />
                       <MenuLink href="/reports" icon={FileText} label="My reports" />
                       <MenuLink href="/chat" icon={Mic} label="Voice assistant" />
                       <MenuLink href="/resources" icon={LifeBuoy} label="Relief resources" />
@@ -192,7 +216,13 @@ export function SiteHeader({ onOpenSos }: { onOpenSos: () => void }) {
                         role="menuitem"
                         type="button"
                         onClick={() => {
-                          signOut();
+                          // next-auth's signOut, not the store's old setter: it
+                          // clears the httpOnly session cookie, which is what
+                          // actually ends the session. `callbackUrl: '/'` lands
+                          // them somewhere sensible, and because `user` is
+                          // derived from the session the whole UI updates on its
+                          // own once the cookie is gone.
+                          void signOut({ callbackUrl: '/' });
                           close();
                         }}
                         className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm font-semibold text-emergency-700 no-tap-highlight hover:bg-emergency-50"

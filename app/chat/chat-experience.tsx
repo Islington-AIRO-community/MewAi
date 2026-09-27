@@ -7,7 +7,7 @@ import { ReliefAssistant } from '@/components/assistant/relief-assistant';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { useApp } from '@/lib/store';
+import { useAiChatInstance } from '@/lib/ai-chat-context';
 import { CATEGORIES } from '@/lib/types';
 
 const QUICK_PHRASES = [
@@ -17,25 +17,29 @@ const QUICK_PHRASES = [
   'We have no clean drinking water',
   'A child is missing near the canal',
   'There is a downed power line across the road',
+  'Men with machetes are going through the houses on our street',
 ];
 
 export function ChatExperience() {
   const searchParams = useSearchParams();
   const intent = searchParams?.get('intent');
-  const { sendMessage } = useApp();
+  // The conversation's one intake, shared with the floating launcher mounted in
+  // `AppShell`. A phrase tapped here and one tapped in the floating assistant
+  // build the same ticket draft, because they are the same conversation.
+  const ai = useAiChatInstance();
   const [seeded, setSeeded] = React.useState(false);
 
-  // Deep link: /chat?intent=medical opens the conversation with that need.
+  // Deep link: /chat?intent=medical records that the reporter came through the
+  // medical tile. This used to call `ai.send()` with an invented first-person
+  // sentence, which both displayed as something they had said and sent to Gemini
+  // as something they had said.
   React.useEffect(() => {
     if (seeded || !intent) return;
     const cat = CATEGORIES[intent as keyof typeof CATEGORIES];
     if (!cat) return;
     setSeeded(true);
-    const t = window.setTimeout(() => {
-      sendMessage(`I need help with ${cat.label.toLowerCase()}. ${cat.description}.`);
-    }, 400);
-    return () => window.clearTimeout(t);
-  }, [intent, seeded, sendMessage]);
+    ai.noteIntent(`You arrived here through the "${cat.label}" category.`);
+  }, [intent, seeded, ai]);
 
   return (
     <div className="flex min-h-[calc(100dvh-4.25rem)] flex-col">
@@ -46,7 +50,7 @@ export function ChatExperience() {
           className="flex min-h-[calc(100dvh-4.25rem)] flex-col border-navy-200 lg:col-span-8 lg:border-r"
         >
           <h1 className="sr-only">AI Relief Assistant</h1>
-          <ReliefAssistant variant="fullscreen" />
+          <ReliefAssistant variant="fullscreen" ai={ai} />
         </section>
 
         {/* ---------- Side rail ---------- */}
@@ -66,7 +70,8 @@ export function ChatExperience() {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => sendMessage(p)}
+                    onClick={() => void ai.send(p)}
+                    disabled={ai.busy}
                     className="h-auto w-full justify-start whitespace-normal py-2.5 text-left text-xs font-semibold leading-snug"
                   >
                     {p}

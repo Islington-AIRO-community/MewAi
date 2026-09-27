@@ -6,7 +6,6 @@ import {
 } from 'lucide-react';
 import type {
   ActionCard,
-  ChatMessage,
   DashboardStat,
   Report,
   TimelineEvent,
@@ -585,108 +584,31 @@ export const TRIAGE_FEED: TriageEvent[] = [
  * Assistant conversation
  * ------------------------------------------------------------------ */
 
-export const INITIAL_ACTION_CARDS: ActionCard[] = [
-  {
-    id: 'ac-1',
-    kind: 'dispatch',
-    title: 'Information Captured',
-    headline: 'Trapped persons detected — 3 people, rising water',
-    departmentId: 'dept-sar',
-    confidence: 0.97,
-    createdAt: ts(14),
-    status: 'confirmed',
-    reportId: '417',
-    fields: [
-      { label: 'Location', value: 'Fairmount Apartments, Block C, Eastvale' },
-      { label: 'People affected', value: '3 (2 adults, 1 child)' },
-      { label: 'Injuries', value: 'Suspected fracture, cannot bear weight' },
-      { label: 'Time critical', value: 'Water rising, ~20 min to waist height' },
-    ],
-  },
-  {
-    id: 'ac-2',
-    kind: 'capture',
-    title: 'Information Captured',
-    headline: 'Oxygen supply lost — 78-year-old resident',
-    departmentId: 'dept-medical',
-    confidence: 0.94,
-    createdAt: ts(9),
-    status: 'confirmed',
-    reportId: '418',
-    fields: [
-      { label: 'Location', value: '14 Marlowe Terrace, Hillcrest' },
-      { label: 'Patient', value: '78 years, COPD, conscious' },
-      { label: 'Equipment', value: 'Home oxygen concentrator destroyed' },
-      { label: 'Contact', value: 'Call preferred — line is clear' },
-    ],
-  },
-];
-
-export const INITIAL_MESSAGES: ChatMessage[] = [
-  {
-    id: 'm-1',
-    role: 'system',
-    at: ts(16),
-    text: 'Session started. Live Relief Mode is active. Stay with me — describe what you need and I will route it to the right team.',
-  },
-  {
-    id: 'm-2',
-    role: 'user',
-    at: ts(15),
-    text: "Hi — I think people are trapped in an apartment building on Alder Street. There's water coming in.",
-    viaVoice: true,
-  },
-  {
-    id: 'm-3',
-    role: 'assistant',
-    at: ts(15),
-    text: 'I am sorry — stay somewhere safe and away from the water. I need three quick things from you: the street or building name, how many people are inside, and whether anyone is hurt.',
-    confidence: 0.94,
-  },
-  {
-    id: 'm-4',
-    role: 'user',
-    at: ts(14),
-    text: "It's Fairmount Apartments, block C in Eastvale. Three people — me, my partner and my son. My partner can't walk properly.",
-    viaVoice: true,
-  },
-  {
-    id: 'm-5',
-    role: 'assistant',
-    at: ts(14),
-    text: 'Thank you — I have everything I need. I am sending this to Urban Search & Rescue as a critical rescue. Please move to a stairwell or higher ground and keep your phone with you.',
-    confidence: 0.97,
-    actionCardId: 'ac-1',
-  },
-  {
-    id: 'm-6',
-    role: 'system',
-    at: ts(9),
-    text: 'New request detected. I can also help with the oxygen issue you mentioned for your neighbour at 14 Marlowe Terrace.',
-  },
-  {
-    id: 'm-7',
-    role: 'user',
-    at: ts(9),
-    text: "Yes please. Mr. Whitfield is 78 and lost his oxygen machine in the fire. He's struggling to breathe.",
-    viaVoice: true,
-  },
-  {
-    id: 'm-8',
-    role: 'assistant',
-    at: ts(9),
-    text: 'Understood — I have the address and his breathing difficulty. Routing to Emergency Medical Services as critical now.',
-    confidence: 0.94,
-    actionCardId: 'ac-2',
-  },
-  {
-    id: 'm-9',
-    role: 'assistant',
-    at: ts(1),
-    text: 'Both requests are being handled. The rescue crew is about 6 minutes away, and a paramedic is already with Mr. Whitfield. I will keep updating you here.',
-    confidence: 0.99,
-  },
-];
+/**
+ * The transcript and the action cards both start **empty**.
+ *
+ * There used to be a seeded conversation here: a family trapped at Fairmount
+ * Apartments and an oxygen concentrator destroyed for a neighbour called Mr.
+ * Whitfield, each closing with an "Information Captured" card already reading
+ * "Dispatched to USAR" or "Dispatched to EMS". A visitor opened `/chat`, saw a
+ * finished emergency that never happened, and no way to tell it from their own.
+ *
+ * It was not only misleading, it was structurally wrong in three ways:
+ *
+ * 1. Every card rendered `status: 'confirmed'`, so the app asserted a dispatch
+ *    nobody made. The only writer of a real dispatch is a human pressing
+ *    "Confirm & dispatch" (`confirmActionCard`), and nothing had.
+ * 2. Each card named a real department with its real crew count and ETA, so a
+ *    fictional incident borrowed the credibility of live capacity numbers.
+ * 3. Nothing in the app knows when a crew will arrive, so a seeded turn may
+ *    never state that one is. The removed seed ended with exactly that claim —
+ *    "the rescue crew is about 6 minutes away" — and it had to be cut.
+ *
+ * The scripted replies below still exist for the offline fallback path, and
+ * they may create a card. What they may not do is present one as already
+ * dispatched: `sendMessage` builds those as `status: 'pending'`, which is the
+ * only state that asks the reporter to confirm.
+ */
 
 /**
  * Scripted assistant replies. Each entry can emit an action card, so the
@@ -809,8 +731,17 @@ export const DEFAULT_REPLY = {
   confidence: 0.88,
 };
 
+/**
+ * Idle-state prompts for the voice tab.
+ *
+ * The hands-free entry that used to sit at index 1 is gone, and the two "I am
+ * listening" copies collapsed into one. It told people to "say help at any time
+ * to wake the assistant", which was never true of anything but the old
+ * simulation — the Live session runs server-side voice activity detection with
+ * no wake word, so the microphone simply always hears them. Copy that promises
+ * a phrase the service does not listen for is worse than no copy.
+ */
 export const VOICE_PROMPTS = [
   'Say or tap what you need — "we are trapped", "someone cannot breathe", "we need shelter".',
-  'Hands-free is on. Say "help" at any time to wake the assistant.',
   'I am listening. Speak naturally — I will confirm the address before dispatching.',
 ] as const;

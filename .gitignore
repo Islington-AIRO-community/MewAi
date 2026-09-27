@@ -5,9 +5,31 @@ build
 .DS_Store
 *.pem
 npm-debug.log*
+
+# Env files. GEMINI_API_KEY lives in ai-backend/.env and must never be
+# committed; AI_API_URL lives in the root .env. A pattern with no slash matches
+# at any depth, so these two lines cover both without naming either path.
 .env
 .env*.local
 .env.*
+# ...but the committed templates have to stay visible. This negation is
+# ORDER-DEPENDENT: it only re-includes a file because it is written after
+# `.env.*`, and git takes the last matching pattern. Moving it above the
+# `.env*` lines silently hides ai-backend/.env.example — a missing template
+# reads as "nothing to copy" rather than as a broken ignore rule.
+!.env.example
+!.env.sample
+
+# Python (ai-backend)
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
 .vercel
 *.tsbuildinfo
 next-env.d.ts

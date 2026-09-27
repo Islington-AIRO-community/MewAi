@@ -1,0 +1,26 @@
+# Runtime dependencies for the API service.
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+httpx==0.28.1
+pydantic==2.10.4
+pydantic-settings==2.7.0
+asyncpg==0.30.0
+
+# Tests only. Kept separate from the runtime set above so the Docker image does
+# not carry them:
+#   pip install -r requirements-dev.txt && python -m pytest app/tests -q
+# The suite covers the deterministic intake rules and makes no model calls, so
+# it runs in milliseconds and never spends Gemini quota.
+-r requirements.txt
+pytest==8.3.4
+# The follow-up service is `async def` all the way down, and without a plugin
+# pytest *silently skips* those tests rather than failing them — the suite would
+# report green while the assertions never ran. `asyncio_mode = auto` below is
+# what makes a bare `async def test_` execute.
+pytest-asyncio==0.25.2
+
+# Used *only* by the opt-in live end-to-end test (`FLARE_LIVE_E2E=1`).
+# It happens to be installed transitively by `uvicorn[standard]`, but relying on
+# that would break the test the day uvicorn drops it — and it would fail only on
+# the one run you can least afford to have fail mysteriously.
+websockets==14.1

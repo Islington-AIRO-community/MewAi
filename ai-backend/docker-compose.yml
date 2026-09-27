@@ -1,0 +1,52 @@
+# PostGIS-free Postgres for FLARE relief tickets.
+#
+#   docker compose up -d db
+#
+# Only the `db` service is needed to develop the frontend against a real
+# database. `api` is there for running the whole backend in a container.
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: flare-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-flare}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-flare}
+      POSTGRES_DB: ${POSTGRES_DB:-flare}
+      # The schema is created by the app on startup, so an empty database is
+      # the correct starting state.
+      POSTGRES_INITDB_ARGS: '--encoding=UTF8'
+    ports:
+      # Host port is 5432 so the DSN in .env.example is the obvious one. Change
+      # it here *and* in DATABASE_URL if 5432 is already taken.
+      - '${POSTGRES_PORT:-5432}:5432'
+    volumes:
+      - flare-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # The app connects on boot, so `up` must not be considered done until
+      # Postgres actually accepts connections.
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-flare} -d ${POSTGRES_DB:-flare}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: flare-ai-backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      GEMINI_API_KEY: ${GEMINI_API_KEY:?GEMINI_API_KEY must be set in ai-backend/.env}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-flare}:${POSTGRES_PASSWORD:-flare}@db:5432/${POSTGRES_DB:-flare}
+      GEMINI_MODELS: ${GEMINI_MODELS:-gemini-3.8-flash,gemini-3.5-flash,gemini-2.5-flash}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+    ports:
+      - '${API_PORT:-8000}:8000'
+
+volumes:
+  flare-pgdata:
