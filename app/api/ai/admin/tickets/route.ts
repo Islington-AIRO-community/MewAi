@@ -29,16 +29,25 @@ export async function GET(request: Request) {
     );
   }
 
-  // Only these two query parameters are forwarded. Anything else a caller adds
+  // Only these three query parameters are forwarded. Anything else a caller adds
   // is dropped rather than passed through, so this cannot become a way to reach
   // a different upstream route.
+  //
+  // A new filter has to be added here or it is silently ignored, and the symptom
+  // is the worst kind: the control renders, the request succeeds, and the list
+  // comes back unfiltered. Nothing errors, so it reads as a backend bug.
   const incoming = new URL(request.url).searchParams;
   const limit = incoming.get('limit') ?? '100';
   const status = incoming.get('status');
+  // Repeatable, and `getAll` because the browser sends one `support=` per
+  // selected chip. An empty value is dropped rather than relayed, so `?support=`
+  // reads as "no filter" instead of a 422 relayed to a responder.
+  const support = incoming.getAll('support').filter(Boolean);
 
   const upstreamUrl = new URL(`${backendUrl()}/api/tickets`);
   upstreamUrl.searchParams.set('limit', limit);
   if (status) upstreamUrl.searchParams.set('status', status);
+  for (const value of support) upstreamUrl.searchParams.append('support', value);
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), AI_TIMEOUT_MS);

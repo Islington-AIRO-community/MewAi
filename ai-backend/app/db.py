@@ -6,9 +6,12 @@ Design notes:
   - The schema is created on startup with idempotent DDL. There is no migration
     tool in this project; adding one is the obvious next step before this holds
     anything real.
-  - `support_needed` is a `text[]` rather than a join table. Four fixed
-    classes, always read whole, never queried by element — a join table would
-    be more ceremony than the query pattern justifies.
+  - `support_needed` is a `text[]` rather than a join table, and now that
+    `/admin` filters the queue by it, `&&` overlaps it against the admin's
+    selection. Four fixed classes, always read whole, one element lookup
+    against a GIN index — still less ceremony than a join table, which would
+    have meant a second table and a join on the query an admin screen runs on
+    every load.
   - `session_id` is indexed and nullable so the admin work can later group a
     reporter's whole conversation into one case.
   - `urgency` is stored as text rather than an enum so adding a level is an
@@ -24,6 +27,7 @@ import asyncpg
 
 from .config import Settings
 from .schemas import (
+    SupportType,
     Ticket,
     TicketCreate,
     TicketMessage,
@@ -78,6 +82,11 @@ CREATE INDEX IF NOT EXISTS relief_tickets_created_at_idx
     ON relief_tickets (created_at DESC);
 CREATE INDEX IF NOT EXISTS relief_tickets_status_idx
     ON relief_tickets (status);
+-- GIN, because the admin queue overlaps `support_needed` against the responder's
+-- selected support types with `&&`. That was the reason the array had no index
+-- at all; a btree cannot help a `text[]` membership test.
+CREATE INDEX IF NOT EXISTS relief_tickets_support_idx
+    ON relief_tickets USING GIN (support_needed);
 CREATE INDEX IF NOT EXISTS relief_tickets_session_idx
     ON relief_tickets (session_id)
     WHERE session_id IS NOT NULL;
@@ -252,13 +261,38 @@ class TicketStore:
         self,
         *,
         status: TicketStatus | None = None,
+        support: list[SupportType] | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> tuple[int, list[Ticket]]:
-        """Returns `(total, page)`. `total` ignores limit/offset."""
+        """
+        Returns `(total, page)`. `total` ignores limit/offset, so it stays the
+        count of everything that matched — which is what lets `/admin` say
+        "showing 100 of 143" instead of implying it showed all 143.
+
+        Filters are composed as a clause list rather than interpolated one at a
+        time, because `LIMIT`/`OFFSET` are numbered positionally after whatever
+        the filters bound. Growing this by appending to `where` is what produces
+        a `$2` that silently collides with a bound argument, and asyncpg reports
+        a wrong type there rather than a missing row.
+        """
         pool = self._require_pool()
-        where = "WHERE status = $1" if status else ""
-        args: list[object] = [status.value] if status else []
+        clauses: list[str] = []
+        args: list[object] = []
+
+        if status:
+            args.append(status.value)
+            clauses.append(f"status = ${len(args)}")
+
+        if support:
+            # `&&` is array overlap, so a ticket needing medical *and* rescue
+            # matches either selection, and selecting both shows the union. The
+            # explicit cast is because asyncpg cannot infer the type of a bare
+            # array parameter in a `&&` comparison; `::text[]` says it outright.
+            args.append([s.value for s in support])
+            clauses.append(f"support_needed && ${len(args)}::text[]")
+
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
 
         total = await pool.fetchval(
             f"SELECT count(*) FROM relief_tickets {where}", *args

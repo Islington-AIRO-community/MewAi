@@ -260,7 +260,14 @@ class Ticket(BaseModel):
 
 
 class TicketListResponse(BaseModel):
-    """Listing for the admin work that comes next."""
+    """
+    A page of the admin queue, with the count of everything that matched.
+
+    `total` deliberately ignores the page's own `limit`/`offset`, so a caller
+    can tell a filtered list that is short from one that is merely capped. The
+    admin list is capped at 100 rows by its proxy, so without this a responder
+    with 143 matching tickets would see 100 and no sign that 43 exist.
+    """
 
     total: int
     tickets: list[Ticket]

@@ -288,6 +288,43 @@ row still says `submitted` — which is the single worst output this backend cou
 produce. `test_follow_up.py` pins that with a model that is explicitly told to
 lie about the status.
 
+### The admin queue's filters are in SQL, and the allowlist is why
+
+`/admin` filters by status and by support type, and both are query parameters
+that have to clear **three** hops, each of which will silently drop a new one:
+
+```
+app/admin/page.tsx            fetchAdminQueue({ status, support })
+  → lib/ticket-portal.ts      one `support=` per selected chip
+  → app/api/ai/admin/tickets  allowlist: forwards limit, status, support — nothing else
+  → GET /api/tickets          `&&` overlap in SQL
+```
+
+The middle hop is the one to remember. `app/api/ai/admin/tickets/route.ts`
+forwards an explicit allowlist and drops everything else, on purpose, so a
+caller cannot reach a different upstream route. A filter that is not on that list
+does not error — the control renders, the request returns 200, and the list comes
+back unfiltered, which reads as a backend bug. **Adding a filter means adding its
+param there, not just upstream.**
+
+- **Support filtering is `support_needed && $n`, an array overlap, not `=`.**
+  `support_needed` is a `text[]` and a ticket can need medical *and* rescue, so
+  equality would drop exactly the multi-need tickets a responder opens the filter
+  to find. Selecting several types is the union in one predicate, never two
+  clauses — two clauses would be an intersection, the opposite of the chips.
+- **The clause list in `TicketStore.list` exists because of placeholder
+  numbering.** `LIMIT`/`OFFSET` are numbered after whatever the filters bound, so
+  growing the query by appending to a single `where` string is how a `$2` ends up
+  bound to a text column. `test_admin_filters.py` pins the emitted SQL and args,
+  because this breaks by returning the wrong rows with no error anywhere.
+- **`total` is untruncated and the list is not.** The proxy caps the queue at
+  100 rows, so the page says "100 of 143" rather than implying it showed 143. A
+  responder reading 100 as "everything" stops looking past the last row.
+- **The stats panel is deliberately *not* filtered.** `fetchAdminStats()` takes
+  no arguments, so "Medical 12" above a list of the 2 medical tickets that are
+  still submitted would read as a bug. The counts describe the whole queue and
+  the panel says so; the chips carry no counts at all.
+
 ### Ownership: who is allowed to read a ticket
 
 A ticket holds a name, a phone number, an address, and sometimes someone else's.

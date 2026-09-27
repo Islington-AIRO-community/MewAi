@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { AlertCircle, ClipboardList, Loader2, RefreshCw, ShieldAlert } from 'lucide-react';
+import { ClipboardList, ListFilter, Loader2, RefreshCw, ShieldAlert, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import {
@@ -16,8 +16,8 @@ import {
   type TicketStats,
 } from '@/lib/ticket-portal';
 import { formatDateTime } from '@/lib/time';
+import { cn, formatNumber } from '@/lib/utils';
 import type { StoredTicket, TicketStatus } from '@/lib/ai-client';
-import { cn } from '@/lib/utils';
 
 /**
  * The response team's queue.
@@ -46,28 +46,53 @@ const STATUS_ORDER: TicketStatus[] = [
 
 export default function AdminQueuePage() {
   const [tickets, setTickets] = React.useState<StoredTicket[] | null>(null);
+  const [total, setTotal] = React.useState(0);
   const [stats, setStats] = React.useState<TicketStats | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [filter, setFilter] = React.useState<TicketStatus | 'all'>('all');
+  const [support, setSupport] = React.useState<SupportType[]>([]);
   const [busyId, setBusyId] = React.useState<string | null>(null);
 
-  const load = React.useCallback(async (status: TicketStatus | 'all') => {
-    setLoading(true);
-    const result = await fetchAdminQueue(status === 'all' ? undefined : status);
-    if (result.ok) {
-      setTickets(result.value.tickets);
-      setError(null);
-    } else {
-      setTickets(null);
-      setError(describe(result.error.kind));
-    }
-    setLoading(false);
-  }, []);
+  const load = React.useCallback(
+    async (status: TicketStatus | 'all', kinds: SupportType[]) => {
+      setLoading(true);
+      const result = await fetchAdminQueue({
+        status: status === 'all' ? undefined : status,
+        support: kinds,
+      });
+      if (result.ok) {
+        setTickets(result.value.tickets);
+        setTotal(result.value.total);
+        setError(null);
+      } else {
+        setTickets(null);
+        setError(describe(result.error.kind));
+      }
+      setLoading(false);
+    },
+    [],
+  );
 
   React.useEffect(() => {
-    void load(filter);
-  }, [filter, load]);
+    void load(filter, support);
+  }, [filter, support, load]);
+
+  /**
+   * Selecting nothing is not the same as selecting everything, so there is no
+   * implicit default to get wrong: the array is the selection.
+   */
+  const toggleSupport = (id: SupportType) =>
+    setSupport((prev) =>
+      prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id],
+    );
+
+  const clearFilters = () => {
+    setFilter('all');
+    setSupport([]);
+  };
+
+  const hasFilters = filter !== 'all' || support.length > 0;
 
   /**
    * Counts are a second request, and a failure here is deliberately silent.
@@ -82,6 +107,11 @@ export default function AdminQueuePage() {
    * Keyed on `filter` as well as `tickets` so a status move re-reads the counts:
    * the whole point of the panel is to move when the distribution moves, and
    * advancing a ticket is exactly the action that changes a bucket.
+   *
+   * Deliberately *not* narrowed by the support filter. These counts describe the
+   * whole queue, and the panel says so in words; showing a responder "Medical 12"
+   * above a list of the 2 medical tickets that are still submitted would be
+   * read as a bug, so the numbers stay global and the chips carry no counts.
    */
   const [statsNonce, setStatsNonce] = React.useState(0);
   React.useEffect(() => {
@@ -92,7 +122,7 @@ export default function AdminQueuePage() {
     return () => {
       cancelled = true;
     };
-  }, [filter, tickets, statsNonce]);
+  }, [filter, support, tickets, statsNonce]);
 
   const advance = async (ticket: StoredTicket, status: TicketStatus) => {
     setBusyId(ticket.id);
@@ -135,7 +165,7 @@ export default function AdminQueuePage() {
             <Button
               variant="outline"
               size="lg"
-              onClick={() => void load(filter)}
+              onClick={() => void load(filter, support)}
               disabled={loading}
             >
               <RefreshCw className={cn('size-4', loading && 'animate-spin')} aria-hidden="true" />
@@ -143,21 +173,71 @@ export default function AdminQueuePage() {
             </Button>
           </div>
 
-          <div className="mt-5 flex flex-wrap gap-1.5">
-            <FilterChip
-              active={filter === 'all'}
-              onClick={() => setFilter('all')}
-              label="All"
-            />
-            {STATUS_ORDER.map((status) => (
+          <fieldset className="mt-5 border-0 p-0">
+            <legend className="text-2xs font-bold uppercase tracking-[0.08em] text-navy-400">
+              Status
+            </legend>
+            <div className="mt-2 flex flex-wrap gap-1.5">
               <FilterChip
-                key={status}
-                active={filter === status}
-                onClick={() => setFilter(status)}
-                label={status.replace('_', ' ')}
+                active={filter === 'all'}
+                onClick={() => setFilter('all')}
+                label="All"
               />
-            ))}
-          </div>
+              {STATUS_ORDER.map((status) => (
+                <FilterChip
+                  key={status}
+                  active={filter === status}
+                  onClick={() => setFilter(status)}
+                  label={status.replace('_', ' ')}
+                />
+              ))}
+            </div>
+          </fieldset>
+
+          {/*
+            Multi-select, and a ticket matches on any of the selected types —
+            the same overlap the database does with `&&`. Single-select would
+            force a responder who needs "medical or rescue" to check one, see
+            half the work, and then check the other, and the queue between the
+            two is the work that does not get picked up.
+
+            The active state uses each type's own `chip` token rather than the
+            navy used above, because colour is only allowed to reinforce the
+            label here, never carry it: every chip keeps its icon and its text.
+          */}
+          <fieldset className="mt-4 border-0 p-0">
+            <legend className="text-2xs font-bold uppercase tracking-[0.08em] text-navy-400">
+              Kind of help
+            </legend>
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+              {SUPPORT_TYPE_LIST.map((s) => {
+                const Icon = s.icon;
+                const active = support.includes(s.id);
+                return (
+                  <button
+                    key={s.id}
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() => toggleSupport(s.id)}
+                    className={cn(
+                      'inline-flex min-h-[40px] items-center gap-1.5 rounded-full px-3 text-xs font-bold ring-1 ring-inset no-tap-highlight transition-colors duration-200',
+                      'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dispatch-600 focus-visible:ring-offset-2',
+                      active ? s.chip : 'bg-white text-navy-500 ring-navy-200 hover:bg-navy-50',
+                    )}
+                  >
+                    <Icon className="size-3.5 shrink-0" aria-hidden="true" />
+                    {s.shortLabel}
+                  </button>
+                );
+              })}
+              {support.length > 0 && (
+                <Button variant="ghost" size="xs" onClick={() => setSupport([])}>
+                  <X className="size-3.5" aria-hidden="true" />
+                  Clear
+                </Button>
+              )}
+            </div>
+          </fieldset>
         </div>
       </div>
 
@@ -168,6 +248,31 @@ export default function AdminQueuePage() {
           <p className="mb-4 flex items-start gap-2 rounded-xl border border-alert-200 bg-alert-50 px-3.5 py-2.5 text-xs font-semibold leading-relaxed text-alert-800">
             <ShieldAlert className="mt-px size-3.5 shrink-0" aria-hidden="true" />
             <span>{error}</span>
+          </p>
+        )}
+
+        {!loading && tickets && !error && (
+          <p
+            role="status"
+            aria-live="polite"
+            className="mb-3.5 text-sm text-navy-500"
+          >
+            <span className="nums font-bold text-navy-900">
+              {tickets.length === total ? formatNumber(total) : formatNumber(tickets.length)}
+            </span>{' '}
+            ticket{total === 1 ? '' : 's'}
+            {/* The proxy caps the queue at 100 rows. `total` is the untruncated
+                count of what matched, so when the two differ the honest thing is
+                to say so — a responder reading 100 as "everything" stops looking
+                at the last ticket on the list. */}
+            {tickets.length < total && (
+              <>
+                {' '}
+                of{' '}
+                <span className="nums font-bold text-navy-900">{formatNumber(total)}</span>{' '}
+                matching
+              </>
+            )}
           </p>
         )}
 
@@ -183,14 +288,34 @@ export default function AdminQueuePage() {
         )}
 
         {!loading && tickets && tickets.length === 0 && (
-          <Card className="p-8 text-center">
-            <h2 className="text-base font-bold tracking-tight text-navy-900">
-              Nothing in the queue
-            </h2>
-            <p className="mx-auto mt-1.5 max-w-sm text-sm leading-relaxed text-navy-500">
-              Tickets appear here as soon as they are filed.
-            </p>
-          </Card>
+          hasFilters ? (
+            <Card className="px-6 py-12 text-center">
+              <span className="mx-auto grid size-14 place-items-center rounded-2xl bg-navy-100 text-navy-500">
+                <ListFilter className="size-7" aria-hidden="true" />
+              </span>
+              <h2 className="mt-4 text-base font-bold tracking-tight text-navy-900">
+                No tickets match
+              </h2>
+              <p className="mx-auto mt-1.5 max-w-sm text-sm leading-relaxed text-navy-500">
+                Nothing in the queue fits this combination. Widening the filters is
+                usually faster than waiting — a ticket filed moments ago is still
+                here.
+              </p>
+              <Button variant="outline" className="mt-5" onClick={clearFilters}>
+                <X aria-hidden="true" />
+                Clear filters
+              </Button>
+            </Card>
+          ) : (
+            <Card className="p-8 text-center">
+              <h2 className="text-base font-bold tracking-tight text-navy-900">
+                Nothing in the queue
+              </h2>
+              <p className="mx-auto mt-1.5 max-w-sm text-sm leading-relaxed text-navy-500">
+                Tickets appear here as soon as they are filed.
+              </p>
+            </Card>
+          )
         )}
 
         {!loading && tickets && tickets.length > 0 && (
