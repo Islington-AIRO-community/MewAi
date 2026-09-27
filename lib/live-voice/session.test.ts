@@ -56,7 +56,12 @@ class StubSocket {
   closed: { code?: number; reason?: string } | null = null;
 
   onopen: (() => void) | null = null;
-  onmessage: ((event: { data: string }) => void) | null = null;
+  // `unknown`, not `string`, because that is the truth about the real event:
+  // `binaryType` is 'arraybuffer', so `MessageEvent.data` arrives as a string
+  // *or* an ArrayBuffer. Typing this as `string` made the stub lie, and the
+  // lie surfaced as a typecheck error the moment a test delivered a binary
+  // frame — which is the one frame the handler must not drop.
+  onmessage: ((event: { data: unknown }) => void) | null = null;
   onclose: ((event: { code?: number; reason?: string }) => void) | null = null;
   onerror: (() => void) | null = null;
 

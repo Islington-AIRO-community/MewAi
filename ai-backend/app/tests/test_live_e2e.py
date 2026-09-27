@@ -230,6 +230,89 @@ async def test_service_returns_audio_for_a_turn() -> None:
 
 
 @pytest.mark.asyncio
+async def test_the_replies_are_nepali_even_when_spoken_to_in_english() -> None:
+    """
+    The one thing a system prompt can promise here, and the one thing nothing
+    else in this repo can check.
+
+    `test_the_live_prompt_pins_the_reply_language` in `test_live_tokens.py`
+    asserts that the *words* asking for Nepali are still in the prompt. That is
+    necessary and it is not sufficient: prompt instructions are requests, not
+    guarantees, and the common failure is not disobeying the rule so much as
+    the mirror reflex — a reporter who speaks English, or switches mid-call, and
+    the model answers in kind for a turn or two before recovering.
+
+    So the probe sends an English turn on purpose. An all-Nepali probe would
+    pass even if the language rule had been deleted from the prompt, because the
+    model would just mirror the caller — which is exactly the bug. Asserting on
+    the *script* rather than the language is deliberate: "Nepali" as a word is
+    ambiguous to a counter, whereas Devanagari in the output transcription is
+    not, and a stray English word inside a Nepali sentence is the half-and-half
+    case the prompt forbids.
+    """
+    settings = Settings()
+    websockets = pytest.importorskip("websockets")
+    try:
+        minted = await mint_live_token(settings)
+    except LiveTokenError as exc:
+        pytest.fail(f"real token mint failed: {exc}")
+
+    fragments: list[str] = []
+    audio_bytes = 0
+
+    async with websockets.connect(
+        minted.ws_url,
+        open_timeout=HANDSHAKE_TIMEOUT_S,
+        max_size=32 * 1024 * 1024,
+        family=SOCKET_FAMILY,
+    ) as socket:
+        await socket.send(json.dumps({"setup": {}}))
+        await asyncio.sleep(0.8)
+        # English, and about an emergency, so a model that ignores the language
+        # rule has every reason to answer in English.
+        await socket.send(
+            json.dumps(
+                {
+                    "realtimeInput": {
+                        "text": "Hello, I am trapped. Where are you? Please help."
+                    }
+                }
+            )
+        )
+
+        deadline = asyncio.get_running_loop().time() + 30.0
+        while asyncio.get_running_loop().time() < deadline:
+            try:
+                raw = await asyncio.wait_for(socket.recv(), timeout=6.0)
+            except asyncio.TimeoutError:
+                break
+            if isinstance(raw, (bytes, bytearray)):
+                raw = raw.decode("utf-8", "replace")
+            content = (json.loads(raw).get("serverContent") or {})
+            for part in (content.get("modelTurn") or {}).get("parts") or []:
+                if (part.get("inlineData") or {}).get("data"):
+                    audio_bytes += len(part["inlineData"]["data"])
+            said = (content.get("outputTranscription") or {}).get("text")
+            if said:
+                fragments.append(said)
+            if content.get("turnComplete") and audio_bytes:
+                break
+
+    assert audio_bytes > 0, "no audio, so there is no reply language to judge"
+    said = "".join(fragments)
+    assert said.strip(), "audio arrived with no output transcription"
+
+    devanagari = [c for c in said if "ऀ" <= c <= "ॿ"]
+    latin = [c for c in said if c.isascii() and c.isalpha()]
+
+    assert len(devanagari) > 20, f"reply is not substantially Devanagari: {said!r}"
+    assert len(latin) / max(len(devanagari), 1) < 0.15, (
+        "the model mirrored the English caller, or drifted mid-sentence: "
+        f"{said!r} ({len(latin)} latin letters against {len(devanagari)} devanagari)"
+    )
+
+
+@pytest.mark.asyncio
 async def test_silence_does_not_end_the_turn() -> None:
     """
     Feeding continuous silence must not produce a `turnComplete`.

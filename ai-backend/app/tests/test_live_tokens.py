@@ -408,3 +408,69 @@ def test_the_setup_pins_the_configured_model_and_voice():
     assert setup["model"] == "models/gemini-3.8-live"
     voice = setup["generationConfig"]["speechConfig"]["voiceConfig"]
     assert voice["prebuiltVoiceConfig"]["voiceName"] == "Charon"
+
+
+# ---------------------------------------------------------------------- #
+# The reply language
+# ---------------------------------------------------------------------- #
+
+
+def test_the_live_prompt_pins_the_reply_language():
+    """
+    Nepali only, and pinned rather than described, because drift is invisible.
+
+    A model that answers in English instead sounds *fine* on the wire: the audio
+    arrives, the transcript arrives, `setupComplete` arrived, the status reads
+    "Listening". Nothing the UI can see degrades. So the rule has to be
+    asserted, and the three failure modes have to be named separately, because
+    a prompt that only says "reply in Nepali" fails all three:
+
+      * mirroring the reporter back into English (common — a reporter who
+        switches mid-call, or an emergency number read in English),
+      * reading English technical terms mid-sentence,
+      * an unspecified register, which lands on formal Sanskritised prose or on
+        casual slang and is harder to follow while frightened.
+    """
+    lowered = LIVE_SYSTEM_INSTRUCTION.lower()
+
+    assert "only in nepali" in lowered
+    assert "devanagari" in lowered
+    assert "always" in lowered
+    # The three rules above, named so the assertion fails if one is dropped.
+    assert "you still reply in nepali" in lowered
+    assert "do not mirror their language back" in lowered
+    assert "never mix a sentence" in lowered
+    assert "never read out english words" in lowered
+    # Register, and the example that anchors it.
+    assert "formality" in lowered
+    assert "बाबा" in LIVE_SYSTEM_INSTRUCTION
+
+
+def test_the_language_is_the_first_section():
+    """
+    Instruction order is how weight is actually assigned. The language rule
+    buried in the middle of the prompt loses to whatever is above it, so it goes
+    first and the tests assert that, not just that the words exist.
+    """
+    headings = [
+        line for line in LIVE_SYSTEM_INSTRUCTION.splitlines() if line.startswith("# ")
+    ]
+
+    assert headings[0] == "# Language"
+
+
+def test_the_setup_does_not_send_a_language_code():
+    """
+    A native-audio model picks its own output language and does not support an
+    explicit `languageCode`; the audio-output language table has no Nepali entry
+    either. So there is no `languageCode` to send, and the setting that used to
+    feed one is gone from `Settings`.
+
+    If this ever comes back, it will be because somebody wanted Nepali to be
+    configurable. It is not: the system instruction is the only lever, and a
+    second one that silently does nothing is worse than none.
+    """
+    setup = live_connect_setup(settings())
+
+    assert "languageCode" not in setup["generationConfig"]["speechConfig"]
+    assert "gemini_live_language" not in Settings.model_fields

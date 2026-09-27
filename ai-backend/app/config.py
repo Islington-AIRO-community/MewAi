@@ -58,7 +58,12 @@ class Settings(BaseSettings):
     # back to a default voice, so a typo here is invisible. It is pinned in
     # the ephemeral token and logged on mint for that reason.
     gemini_live_voice: str = "Charon"
-    gemini_live_language: str = "en-US"
+    # There is deliberately no `gemini_live_language`. A native-audio Live model
+    # chooses its own output language and does not support an explicit
+    # `languageCode`, so the setting would read like a control while doing
+    # nothing. The spoken reply language is held by
+    # `live_prompts.LIVE_SYSTEM_INSTRUCTION` instead, and asserted in
+    # `test_live_tokens.py`. See the module docstring there.
     # The token authorises a browser to open a socket against our quota. It is
     # minted per session and single-use, so keep it short.
     gemini_live_token_ttl_seconds: int = 900
