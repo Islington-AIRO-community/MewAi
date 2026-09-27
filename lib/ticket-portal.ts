@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import type { StoredTicket, TicketStatus } from '@/lib/ai-client';
+import type { SupportType } from '@/lib/types';
 
 /**
  * The ticket portal: "my tickets", and the follow-up conversation on one.
@@ -133,11 +134,34 @@ export function setTicketStatus(
   });
 }
 
+export interface AdminQueueFilters {
+  status?: TicketStatus;
+  /**
+   * Support types to keep, as a union — a ticket matches if it needs *any* of
+   * them, so `['medical', 'rescue']` shows both, not just tickets needing both.
+   * Empty or omitted means no filter. Repeated on the query string as
+   * `support=…&support=…`, which is what the proxy's allowlist forwards.
+   */
+  support?: SupportType[];
+}
+
+/**
+ * The admin queue, filtered in the database rather than in the page.
+ *
+ * The filtering is server-side for a reason that is easy to lose: this proxy
+ * caps the list at 100 rows, so narrowing a list the browser already holds can
+ * only ever hide matches beyond that cap. The `total` comes back untruncated,
+ * which is what lets `/admin` admit "showing 100 of 143" instead of implying it
+ * showed all 143.
+ */
 export function fetchAdminQueue(
-  status?: TicketStatus,
+  filters: AdminQueueFilters = {},
 ): Promise<PortalResult<{ total: number; tickets: StoredTicket[] }>> {
-  const query = status ? `?status=${encodeURIComponent(status)}` : '';
-  return request(`/api/ai/admin/tickets${query}`);
+  const query = new URLSearchParams();
+  if (filters.status) query.set('status', filters.status);
+  for (const value of filters.support ?? []) query.append('support', value);
+  const search = query.toString();
+  return request(`/api/ai/admin/tickets${search ? `?${search}` : ''}`);
 }
 
 /**
