@@ -159,6 +159,21 @@ class ChatResponse(BaseModel):
     degraded: bool = False
 
 
+class LiveTokenResponse(BaseModel):
+    """
+    Everything the browser needs to open a Live voice socket.
+
+    Note what is absent: the Gemini key, the model's config, and this service's
+    own address. The config is pinned into the token server-side, so there is
+    nothing here for a modified client to change. `ws_url` is Google, not us,
+    so handing it over reveals no internal topology.
+    """
+
+    ws_url: str
+    token: str
+    expires_at: datetime
+
+
 # ---------------------------------------------------------------------- #
 # Tickets
 # ---------------------------------------------------------------------- #
@@ -376,24 +391,3 @@ class FollowUpResponse(BaseModel):
     model: str
     safety_note: str = ""
 
-
-# ---------------------------------------------------------------------- #
-# Live voice
-# ---------------------------------------------------------------------- #
-
-
-class LiveSessionResponse(BaseModel):
-    """
-    One short-lived Gemini Live credential, for the browser to open a WebSocket
-    with.
-
-    Everything needed to connect, and nothing that outlives the session: the
-    token is single-use, so this payload is safe to hand to a browser that is
-    about to speak to a stranger during a flood. It is *not* the API key and
-    never becomes it — there is no endpoint here that can widen a token.
-    """
-
-    token: str
-    expires_at: datetime
-    model: str
-    ws_url: str

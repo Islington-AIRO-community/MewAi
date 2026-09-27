@@ -4,7 +4,7 @@ FastAPI application for the FLARE AI chat and relief-ticket intake.
 Responsibilities kept deliberately narrow:
 
   * own the Gemini client and the Postgres pool for the process lifetime
-  * expose `/api/chat/message`, `/api/live/session`, `/api/tickets*`,
+  * expose `/api/chat/message`, `/api/live/token`, `/api/tickets*`,
     `/api/health`, `/api/ready`
   * nothing about the Next.js app's rendering, types or styling
 
@@ -15,8 +15,8 @@ can be poked directly with curl during development.
 
 One deliberate exception to "the browser only talks to the proxy": the Gemini
 Live *WebSocket* is opened by the browser directly, because a Next route
-handler cannot proxy a protocol upgrade. `/api/live/session` exists so the
-browser can obtain a single-use, minutes-long token instead of the key.
+handler cannot proxy a protocol upgrade. `/api/live/token` exists so the browser
+can obtain a single-use, minutes-long token instead of the key.
 """
 
 from __future__ import annotations
@@ -34,7 +34,6 @@ from .config import get_settings
 from .db import TicketStore
 from .follow_up_service import FollowUpService
 from .gemini import Gemini
-from .gemini_live import GeminiLive
 from .routers import chat, health, live, tickets
 
 logging.basicConfig(
@@ -51,12 +50,6 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     gemini = Gemini(settings)
     await gemini.__aenter__()
 
-    # A separate client from `gemini`: a Live token mint is one small REST call
-    # with a short timeout, and it must not queue behind a 30-second text
-    # generation while someone waits on a microphone prompt.
-    live = GeminiLive(settings)
-    await live.__aenter__()
-
     store = TicketStore(settings)
     # A missing database is fatal for ticket creation but must not stop the
     # process: the chat can still run and a user asking for a rescue should
@@ -68,20 +61,18 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     app.state.settings = settings
     app.state.gemini = gemini
-    app.state.live = live
     app.state.tickets = store
     app.state.chat = ChatService(settings, gemini)
     app.state.follow_up = FollowUpService(settings, gemini, store)
 
     if not settings.has_gemini_key:
         log.warning("GEMINI_API_KEY is not set - every chat turn will be degraded.")
-    log.info("FLARE AI backend %s ready (live voice: %s)", __version__, settings.gemini_live_model)
+    log.info("FLARE AI backend %s ready", __version__)
 
     try:
         yield
     finally:
         await store.close()
-        await live.__aexit__(None, None, None)
         await gemini.__aexit__(None, None, None)
 
 

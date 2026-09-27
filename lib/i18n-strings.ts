@@ -592,40 +592,38 @@ export const EN: Record<string, string> = {
   'voice.connectingHint': 'Opening a voice channel',
   'voice.listening': 'Listening',
   'voice.listeningHint': 'Speak naturally. I will ask if I do not catch something.',
-  'voice.thinking': 'Thinking',
-  'voice.thinkingHint': 'Working out what you need',
   'voice.speaking': 'Speaking',
   'voice.speakingHint': 'Interrupt me at any point — just start talking',
   'voice.muted': 'Microphone off',
   'voice.mutedHint': 'I cannot hear you. Unmute when you are ready.',
   'voice.error': 'Voice is unavailable',
   'voice.errorHint': 'Text chat below still works',
-  'voice.stage.token': 'Asking our server for a voice channel',
-  'voice.stage.socket': 'Reaching the voice service',
-  'voice.stage.setup': 'Starting the voice session',
-  'voice.micPending': 'Waiting for permission',
-  'voice.micPendingHint':
-    'Your browser is asking whether this page may use your microphone. Choose Allow to talk, or Deny to carry on in text.',
   'voice.iAmListening': 'I am listening…',
-  'voice.endContinue': 'End the voice call and continue in text',
-  'voice.retry': 'Try voice again',
   'voice.youSaid': 'You said',
-  'voice.iSaid': 'I said',
-  'voice.turnsEmptyInCall':
-    'Nothing has been said yet. The transcript appears here as you talk, and it is what gets saved with your ticket.',
-  'voice.turnsEmptyIdle':
-    'Start talking and your words appear here. Nothing is sent anywhere until you have read the summary and pressed submit.',
-  'voice.typeInsteadAria': 'Type a reply instead of speaking',
-  'voice.typeInsteadPlaceholder': 'Or type your reply…',
-  'voice.sendReply': 'Send this reply',
-  'voice.endCall': 'End the voice call',
-  'voice.startCall': 'Start the voice call',
   'voice.mute': 'Mute microphone',
   'voice.unmute': 'Unmute microphone',
-  'voice.handsFree': 'Hands-free is always on — just start speaking to interrupt me.',
-  'voice.notRecorded':
-    'Nothing is recorded. The transcript is only kept if you choose to keep it on the review screen.',
-  'voice.useText': 'Use text instead',
+
+  // ---- the real Gemini Live session ----------------------------------
+  'voice.reconnectingHint': 'Reconnecting — your conversation is saved',
+  'voice.encrypted': 'Encrypted',
+  'voice.endSession': 'End the voice session',
+  'voice.iAmSpeaking': 'I am speaking — you can interrupt me at any time',
+  'voice.continueText': 'Continue in text chat',
+  'voice.toldEverything': 'I have told you everything',
+  'voice.nothingHeard': 'Nothing heard yet',
+  'voice.nothingLost': 'Nothing you said has been lost.',
+  'voice.startVoice': 'Start a voice conversation',
+  'voice.fail.rateLimited':
+    'Too many voice sessions started. Try again in a minute, or continue in text.',
+  'voice.fail.unavailable': 'Voice is unavailable right now. You can keep going in text.',
+  'voice.fail.unreachable': 'Could not reach the voice service. You can keep going in text.',
+  'voice.fail.unknown': 'Could not start a voice session. You can keep going in text.',
+  'voice.fail.gaveUp':
+    'The voice connection kept dropping. You can keep going in text, and nothing you said has been lost.',
+  'voice.fail.socketRefused':
+    'The voice service refused the connection. You can keep going in text.',
+  'voice.fail.noSetup':
+    'The voice session never started. You can keep going in text, and nothing you said has been lost.',
 
   // ---- filed ticket's spoken intake ---------------------------------
   'transcript.ariaLabel': 'Spoken intake',
@@ -1426,40 +1424,41 @@ export const NE: Record<string, string> = {
   'voice.connectingHint': 'आवाज च्यानल खोल्दै',
   'voice.listening': 'सुन्दैछु',
   'voice.listeningHint': 'स्वाभाविक रूपमा बोल्नुहोस्। केही नबुझेमा म सोध्छु।',
-  'voice.thinking': 'सोच्दैछु',
-  'voice.thinkingHint': 'तपाईंलाई के चाहिन्छ बुझ्दैछु',
   'voice.speaking': 'बोल्दैछु',
   'voice.speakingHint': 'जहिले पनि मलाई रोक्न सक्नुहुन्छ — बोल्न थाल्नुहोस्',
   'voice.muted': 'माइक्रोफोन बन्द',
   'voice.mutedHint': 'म तपाईंलाई सुन्न सक्दिन। तयार भएपछि आवाज खोल्नुहोस्।',
   'voice.error': 'आवाज उपलब्ध छैन',
   'voice.errorHint': 'तलको लेखेर कुराकानी अझै काम गर्छ',
-  'voice.stage.token': 'हाम्रो सर्भरबाट आवाज च्यानल माग्दै',
-  'voice.stage.socket': 'आवाज सेवामा पुग्दै',
-  'voice.stage.setup': 'आवाज सुरु गर्दै',
-  'voice.micPending': 'अनुमतिको पर्खाइमा',
-  'voice.micPendingHint':
-    'तपाईंको ब्राउजरले यो पृष्ठले तपाईंको माइक्रोफोन प्रयोग गर्न सक्छ कि सोधिरहेको छ। बोल्न अनुमति दिनुहोस्, वा लेखमा जारी राख्न अस्वीकार गर्नुहोस्।',
   'voice.iAmListening': 'म सुन्दैछु…',
-  'voice.endContinue': 'आवाज कल समाप्त गरी लेखमा जारी राख्नुहोस्',
-  'voice.retry': 'आवाज फेरि प्रयास गर्नुहोस्',
   'voice.youSaid': 'तपाईंले भन्नुभयो',
-  'voice.iSaid': 'मैले भनेँ',
-  'voice.turnsEmptyInCall':
-    'अझै केही भनिएको छैन। तपाईं बोल्दै जाँदा यहाँ प्रतिलेखन देखिन्छ, र यही तपाईंको टिकटसँग सुरक्षित हुन्छ।',
-  'voice.turnsEmptyIdle':
-    'बोल्न थाल्नुहोस्, तपाईंका शब्द यहाँ देखिन्छन्। सारांश पढेर पठाउनु नथिचेसम्म केही पठाइँदैन।',
-  'voice.typeInsteadAria': 'बोल्नुको सट्टा लेखेर जवाफ दिनुहोस्',
-  'voice.typeInsteadPlaceholder': 'वा आफ्नो जवाफ लेख्नुहोस्…',
-  'voice.sendReply': 'यो जवाफ पठाउनुहोस्',
-  'voice.endCall': 'आवाज कल समाप्त गर्नुहोस्',
-  'voice.startCall': 'आवाज कल सुरु गर्नुहोस्',
   'voice.mute': 'माइक्रोफोन बन्द गर्नुहोस्',
   'voice.unmute': 'माइक्रोफोन खोल्नुहोस्',
-  'voice.handsFree': 'ह्यान्ड्स-फ्रि सधैँ सक्रिय हुन्छ — मलाई रोक्न बस्न थाल्नुहोस्।',
-  'voice.notRecorded':
-    'केही रेकर्ड हुँदैन। समीक्षा स्क्रिनमा तपाईंले राख्ने निर्णय गर्नुभएमा मात्र प्रतिलेखन राखिन्छ।',
-  'voice.useText': 'सट्टा लेख प्रयोग गर्नुहोस्',
+
+  // ---- the real Gemini Live session ----------------------------------
+  'voice.reconnectingHint': 'पुनः जडान हुँदै — तपाईंको कुराकानी सुरक्षित छ',
+  'voice.encrypted': 'इन्क्रिप्टेड',
+  'voice.endSession': 'आवाज सत्र समाप्त गर्नुहोस्',
+  'voice.iAmSpeaking': 'म बोल्दैछु — जहिले पनि मलाई रोक्न सक्नुहुन्छ',
+  'voice.continueText': 'लेखेर कुराकानी जारी राख्नुहोस्',
+  'voice.toldEverything': 'मैले सबै कुरा भनिसकें',
+  'voice.nothingHeard': 'अहिलेसम्म केही सुनेको छैन',
+  'voice.nothingLost': 'तपाईंले भन्नुभएको केही पनि गुमेको छैन।',
+  'voice.startVoice': 'आवाज कुराकानी सुरु गर्नुहोस्',
+  'voice.fail.rateLimited':
+    'धेरै आवाज सत्र सुरु भयो। एक मिनेटपछि प्रयास गर्नुहोस्, वा लेखमा जारी राख्नुहोस्।',
+  'voice.fail.unavailable':
+    'अहिले आवाज उपलब्ध छैन। तपाईं लेखमा जारी राख्न सक्नुहुन्छ।',
+  'voice.fail.unreachable':
+    'आवाज सेवामा पुग्न सकिएन। तपाईं लेखमा जारी राख्न सक्नुहुन्छ।',
+  'voice.fail.unknown':
+    'आवाज सत्र सुरु गर्न सकिएन। तपाईं लेखमा जारी राख्न सक्नुहुन्छ।',
+  'voice.fail.gaveUp':
+    'आवाज जडान बारम्बार खसियो। तपाईं लेखमा जारी राख्न सक्नुहुन्छ, र तपाईंले भन्नुभएको केही पनि गुमेको छैन।',
+  'voice.fail.socketRefused':
+    'आवाज सेवाले जडान अस्वीकार गर्‍यो। तपाईं लेखमा जारी राख्न सक्नुहुन्छ।',
+  'voice.fail.noSetup':
+    'आवाज सत्र सुरु भएन। तपाईं लेखमा जारी राख्न सक्नुहुन्छ, र तपाईंले भन्नुभएको केही पनि गुमेको छैन।',
 
   // ---- filed ticket's spoken intake ---------------------------------
   'transcript.ariaLabel': 'मौखिक बयन',

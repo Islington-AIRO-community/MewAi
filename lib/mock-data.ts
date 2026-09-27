@@ -731,8 +731,17 @@ export const DEFAULT_REPLY = {
   confidence: 0.88,
 };
 
+/**
+ * Idle-state prompts for the voice tab.
+ *
+ * The hands-free entry that used to sit at index 1 is gone, and the two "I am
+ * listening" copies collapsed into one. It told people to "say help at any time
+ * to wake the assistant", which was never true of anything but the old
+ * simulation — the Live session runs server-side voice activity detection with
+ * no wake word, so the microphone simply always hears them. Copy that promises
+ * a phrase the service does not listen for is worse than no copy.
+ */
 export const VOICE_PROMPTS = [
   'Say or tap what you need — "we are trapped", "someone cannot breathe", "we need shelter".',
-  'Hands-free is on. Say "help" at any time to wake the assistant.',
   'I am listening. Speak naturally — I will confirm the address before dispatching.',
 ] as const;

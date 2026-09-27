@@ -44,6 +44,14 @@ interface AppContextValue extends AppState {
     confidence?: number;
     actionCardId?: string;
     offline?: boolean;
+    /**
+     * Spoken rather than typed.
+     *
+     * Set when a Live voice turn is replayed into the transcript, so the whole
+     * spoken conversation carries the same marker as a typed one and the
+     * reporter can see at a glance which turns were spoken.
+     */
+    viaVoice?: boolean;
   }) => void;
   /** The scripted reply for a message, without sending it. */
   scriptedReplyFor: (text: string) => { text: string; confidence: number };
@@ -167,7 +175,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   );
 
   const appendAssistantMessage = React.useCallback<AppContextValue['appendAssistantMessage']>(
-    ({ text, confidence, actionCardId, offline }) => {
+    ({ text, confidence, actionCardId, offline, viaVoice }) => {
       const message: ChatMessage = {
         id: nextId('m'),
         role: 'assistant',
@@ -176,6 +184,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         confidence,
         actionCardId,
         offline,
+        viaVoice,
       };
       setMessages((prev) => [...prev, message]);
       setIsResponding(false);

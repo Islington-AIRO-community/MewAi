@@ -84,6 +84,31 @@ export interface AiChatApi extends AiChatState {
   /** Send a user turn and fold the assistant's answer into the transcript. */
   send: (text: string, opts?: { viaVoice?: boolean }) => Promise<void>;
   /**
+   * Hand a finished spoken conversation to the intake in one request.
+   *
+   * ## Why this exists
+   *
+   * Live voice produces a transcript, and a transcript is not a ticket. The
+   * intake model owns the draft and — critically — owns `missing_slots()`, so
+   * a voice session that built its own draft would be a second source of
+   * readiness truth. There is exactly one readiness authority in this system and
+   * this is the only way voice touches it.
+   *
+   * ## One request, not one per turn
+   *
+   * A four-minute conversation is maybe a dozen turns. Sending each as its own
+   * `sendChatTurn` would make the model answer a question the reporter already
+   * answered, eleven times, and would put a review form on screen halfway
+   * through a sentence. So the whole transcript goes up once and comes back as a
+   * single draft, and the answer that lands in the transcript is the *next*
+   * question rather than a reply to something already resolved.
+   *
+   * `turns` is what the caller has already shown the reporter, so appending them
+   * keeps the visible transcript identical to what was sent — the same rule the
+   * text composer follows.
+   */
+  ingestTranscript: (turns: WireMessage[]) => Promise<void>;
+  /**
    * Record how the reporter arrived — a category tile they tapped, say — as
    * context for the model and a visible system line. Never a user utterance:
    * the reporter did not type it, and telling Gemini they did would be a
@@ -452,6 +477,132 @@ export function useAiChat(): AiChatApi {
     // every keystroke in the review form, which is harmless.
   }, [sendMessage, appendAssistantMessage, scriptedReplyFor, state.draft]);
 
+  /**
+   * Hold the spoken turns until the ticket is filed.
+   *
+   * Declared *above* `ingestTranscript` on purpose: that callback names it in a
+   * dependency array, and a dependency array is read during render — so a
+   * definition further down the hook is a `ReferenceError` on every render
+   * rather than only when voice is used.
+   */
+  const setVoiceTranscript = React.useCallback(
+    (turns: { role: 'reporter' | 'assistant'; text: string }[]) => {
+      // Last write wins, and that is the intent: the live session passes the
+      // conversation as it stands, so re-rendering the buffer from scratch is
+      // what keeps a dropped turn from becoming permanent.
+      setState((prev) => ({ ...prev, voiceTranscript: turns }));
+    },
+    [],
+  );
+
+  const ingestTranscript = React.useCallback(
+    async (turns: WireMessage[]) => {
+      // Only turns with something in them. The Live session commits a turn when
+      // the server closes it, and a turn cut off by an interruption can commit
+      // empty — those are dropped here rather than sent as blank user lines,
+      // which the proxy would reject outright.
+      const usable = turns
+        .map((turn) => ({ role: turn.role, text: turn.text.trim() }))
+        .filter((turn) => turn.text.length > 0);
+
+      if (usable.length === 0) return;
+
+      // Hand the spoken turns to the buffer that travels with the ticket, before
+      // anything can fail. Without this the call is replayed into the transcript
+      // on screen but no transcript is ever stored: the review screen's "what was
+      // said on the call" block stays hidden, and the filed ticket says it was
+      // taken by voice while recording nothing about it. This is the only place
+      // the two voice paths meet — `ingestTranscript` is the caller, so it is
+      // also where the roles are mapped, since the Live session speaks in the
+      // wire's `user`/`assistant` and the stored transcript in
+      // `reporter`/`assistant`.
+      setVoiceTranscript(
+        usable.map((turn) => ({
+          role: turn.role === 'user' ? ('reporter' as const) : ('assistant' as const),
+          text: turn.text,
+        })),
+      );
+
+      // Mirror the conversation into the shared transcript *first*, so the
+      // reporter can see what they said even if the request below never
+      // completes. This is the same ordering as `send`: the user's words land
+      // before any waiting begins, because during an outage the only record of
+      // their report is what is already on screen.
+      for (const turn of usable) {
+        transcript.current = [...transcript.current, turn];
+        if (turn.role === 'user') {
+          await sendMessage(turn.text, { viaVoice: true, deferReply: true });
+        } else {
+          appendAssistantMessage({ text: turn.text, viaVoice: true });
+        }
+      }
+
+      setState((prev) => ({ ...prev, busy: true, status: 'thinking', error: '' }));
+
+      const facts = knownFactsFrom(state.draft);
+      const corrections = Object.keys(edits.current).length
+        ? ({ ...edits.current } as Partial<Record<SlotName, string>>)
+        : undefined;
+
+      const request = {
+        messages: transcript.current,
+        sessionId: sessionId.current,
+        knownFacts: facts,
+        editedDraft: corrections,
+        context: context.current.length ? context.current : undefined,
+      };
+
+      try {
+        const turn = await sendChatTurn(request);
+        const draft = mergeDraft(state.draft, turn.draft);
+        const missing = turn.missing ?? missingSlots(draft);
+        transcript.current = [...transcript.current, { role: 'assistant', text: turn.reply }];
+        appendAssistantMessage({
+          text: turn.reply,
+          confidence: turn.confidence,
+          offline: turn.degraded,
+        });
+
+        setState((prev) => ({
+          ...prev,
+          busy: false,
+          // Same rule as `send`: the client-computed `missing` decides whether
+          // the review form opens, not the server's `is_complete`.
+          status: missing.length === 0 ? 'review' : 'thinking',
+          draft,
+          missing,
+          asking: turn.next_questions ?? [],
+          offline: turn.degraded,
+          safetyNote: turn.safety_note ?? '',
+          rejected: missing.length === 0 ? [] : prev.rejected,
+          error: '',
+        }));
+      } catch (error) {
+        // Same two failures as `send`, and the same two different things to say
+        // about them. A voice reporter has just talked for minutes; telling them
+        // the request was refused would be alarming and untrue, and telling them
+        // the assistant is down when it rejected the request would send them to
+        // a form instead of to a retry.
+        if (isRequestRejection(error)) {
+          setState((prev) => ({
+            ...prev,
+            busy: false,
+            offline: true,
+            error:
+              'The assistant could not read this conversation. Everything you said is still here — try sending it again, or continue in text.',
+          }));
+          return;
+        }
+
+        const fallback = scriptedReplyFor(usable[usable.length - 1].text);
+        transcript.current = [...transcript.current, { role: 'assistant', text: fallback.text }];
+        appendAssistantMessage({ ...fallback, offline: true });
+        setState((prev) => ({ ...prev, busy: false, offline: true }));
+      }
+    },
+    [sendMessage, appendAssistantMessage, scriptedReplyFor, setVoiceTranscript, state.draft],
+  );
+
   const edit = React.useCallback((patch: Partial<TicketDraft>) => {
     setState((prev) => {
       const draft = { ...prev.draft, ...patch };
@@ -494,16 +645,6 @@ export function useAiChat(): AiChatApi {
       };
     });
   }, []);
-
-  const setVoiceTranscript = React.useCallback(
-    (turns: { role: 'reporter' | 'assistant'; text: string }[]) => {
-      // Last write wins, and that is the intent: the live session passes the
-      // conversation as it stands, so re-rendering the buffer from scratch is
-      // what keeps a dropped turn from becoming permanent.
-      setState((prev) => ({ ...prev, voiceTranscript: turns }));
-    },
-    [],
-  );
 
   const setSaveVoiceTranscript = React.useCallback((save: boolean) => {
     setState((prev) => ({ ...prev, saveVoiceTranscript: save }));
@@ -675,6 +816,7 @@ export function useAiChat(): AiChatApi {
   return {
     ...state,
     send,
+    ingestTranscript,
     noteIntent,
     edit,
     applyExtraction,

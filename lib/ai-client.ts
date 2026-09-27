@@ -314,3 +314,115 @@ export type TicketSource = 'ai-chat' | 'sos' | 'voice';
 export function createTicket(input: CreateTicketInput): Promise<StoredTicket> {
   return postJson<StoredTicket>('/api/ai/tickets', input);
 }
+
+// ---------------------------------------------------------------------- //
+// Live voice
+// ---------------------------------------------------------------------- //
+
+/**
+ * One single-use credential for one voice session.
+ *
+ * Note what is *not* here: the Gemini key, the model, the system prompt, and
+ * the backend's address. All of those are pinned into the token server-side by
+ * `ai-backend/app/live_prompts.py`, so a modified client has nothing to change
+ * and nothing worth stealing. `ws_url` points at Google, not at us, so handing
+ * it over reveals no internal topology.
+ */
+export interface LiveToken {
+  ws_url: string;
+  token: string;
+  expires_at: string;
+}
+
+/**
+ * The whole vocabulary of ways starting a voice session can fail.
+ *
+ * Modelled on `PortalError` in `lib/ticket-portal.ts` and for the same reason:
+ * each of these is a state the UI has to say something specific about. "The
+ * microphone is not available" and "the assistant is busy" both being rendered
+ * as "voice failed" is how someone ends up typing a message during a flood
+ * because they were told a lie about why the microphone stopped.
+ */
+export type LiveTokenErrorKind =
+  /** The proxy or backend could not be reached at all. */
+  | 'unreachable'
+  /** Backend is up; Gemini is not, or the key is missing (HTTP 503). */
+  | 'unavailable'
+  /** Too many sessions from this connection (HTTP 429). */
+  | 'rate_limited'
+  /** The microphone or `getUserMedia` is unavailable or was refused. */
+  | 'no_microphone'
+  /** Anything else, including a 4xx we did not expect. */
+  | 'unknown';
+
+export class LiveTokenError extends Error {
+  readonly kind: LiveTokenErrorKind;
+
+  constructor(kind: LiveTokenErrorKind, message: string) {
+    super(message);
+    this.name = 'LiveTokenError';
+    this.kind = kind;
+  }
+}
+
+export type LiveTokenResult =
+  | { ok: true; token: LiveToken }
+  | { ok: false; kind: LiveTokenErrorKind; message: string };
+
+/**
+ * Ask the proxy for a token. Resolves rather than rejects, like everything else
+ * in this file.
+ */
+export async function fetchLiveToken(): Promise<LiveTokenResult> {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), 20_000);
+
+  try {
+    const res = await fetch('/api/ai/live-token', {
+      method: 'POST',
+      signal: controller.signal,
+    });
+
+    if (res.status === 429) {
+      return {
+        ok: false,
+        kind: 'rate_limited',
+        message: 'Too many voice sessions started. Try again in a minute, or continue in text.',
+      };
+    }
+
+    if (res.status === 503) {
+      return {
+        ok: false,
+        kind: 'unavailable',
+        message: 'Voice is unavailable right now. You can keep going in text.',
+      };
+    }
+
+    if (!res.ok) {
+      return {
+        ok: false,
+        kind: 'unknown',
+        message: 'Could not start a voice session. You can keep going in text.',
+      };
+    }
+
+    const body = (await res.json()) as LiveToken;
+    if (!body?.ws_url || !body?.token) {
+      return {
+        ok: false,
+        kind: 'unknown',
+        message: 'The voice service sent an incomplete response. You can keep going in text.',
+      };
+    }
+    return { ok: true, token: body };
+  } catch {
+    return {
+      ok: false,
+      kind: 'unreachable',
+      message: 'Could not reach the voice service. You can keep going in text.',
+    };
+  } finally {
+    window.clearTimeout(timer);
+  }
+}

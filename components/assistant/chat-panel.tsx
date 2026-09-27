@@ -9,6 +9,7 @@ import {
   Info,
   Loader2,
   Mic,
+  MicOff,
   PencilLine,
   Search,
   ShieldCheck,
@@ -143,6 +144,8 @@ export function ChatPanel({
   onSend,
   onConfirmCard,
   onDismissCard,
+  voiceState,
+  onToggleMic,
   className,
   autoFocusInput = true,
   showSearch = true,
@@ -154,6 +157,19 @@ export function ChatPanel({
   onSend: (text: string) => void;
   onConfirmCard: (card: ActionCard) => void;
   onDismissCard: (card: ActionCard) => void;
+  /**
+   * The voice session's visual state, for the composer's mic button. It is the
+   * same `VoiceState` the voice tab renders, passed down rather than read from a
+   * context, because there is one session per `ReliefAssistant` and that
+   * component owns it.
+   */
+  voiceState: 'idle' | 'listening' | 'thinking' | 'speaking' | 'muted' | 'connecting' | 'error';
+  /**
+   * Start a session if there is none, otherwise mute/unmute it. The button is
+   * the fastest route into voice from the text composer, so it does both jobs
+   * rather than being dead until the voice tab has been opened.
+   */
+  onToggleMic: () => void;
   className?: string;
   autoFocusInput?: boolean;
   showSearch?: boolean;
@@ -243,6 +259,16 @@ export function ChatPanel({
   };
 
   const results = filtered ?? messages;
+  const micActive = voiceState === 'listening';
+  // Three states, three different meanings, so three different labels. A single
+  // "mute" label on a button that is really "start a voice session" is how a
+  // control ends up doing nothing and looking broken.
+  const micIdle = voiceState === 'idle' || voiceState === 'error';
+  const micLabel = micIdle
+    ? t('voice.startVoice')
+    : micActive
+      ? t('voice.mute')
+      : t('voice.unmute');
 
   return (
     <div className={cn('flex min-h-0 flex-1 flex-col', className)}>
@@ -484,34 +510,51 @@ export function ChatPanel({
             </p>
           )}
 
-          <div className="relative min-w-0 flex-1">
-            <label htmlFor="relief-chat-input" className="sr-only">
-              {t('chat.inputLabel')}
-            </label>
-            <textarea
-              id="relief-chat-input"
-              ref={inputRef}
-              rows={1}
-              value={draft}
-              onChange={autoGrow}
-              onKeyDown={onKeyDown}
-              placeholder={t('chat.inputPlaceholder')}
-              aria-describedby="relief-chat-help"
-              className={cn(
-                'max-h-40 min-h-[52px] w-full resize-none rounded-xl border border-navy-200 bg-white py-3.5 pl-4 pr-12 text-[15px] leading-relaxed text-navy-800',
-                'placeholder:text-navy-400',
-                'focus-visible:outline-none focus-visible:border-dispatch-500 focus-visible:ring-2 focus-visible:ring-dispatch-600/30',
-              )}
-            />
+          {/* The mic sits *outside* the textarea's own relative box, because
+              that box already holds the send button in its bottom-right corner
+              and the text field is padded for exactly one control. */}
+          <div className="flex items-end gap-2">
             <Button
-              type="submit"
-              size="icon"
-              disabled={!draft.trim() || waiting}
-              className="absolute bottom-2.5 right-2.5"
-              srLabel={t('chat.send')}
+              type="button"
+              variant={micActive ? 'accent' : 'outline'}
+              size="iconLg"
+              onClick={onToggleMic}
+              aria-pressed={micActive}
+              srLabel={micLabel}
+              className="shrink-0"
             >
-              <ArrowUp aria-hidden="true" />
+              {micIdle ? <Mic aria-hidden="true" /> : micActive ? <MicOff aria-hidden="true" /> : <Mic aria-hidden="true" />}
             </Button>
+
+            <div className="relative min-w-0 flex-1">
+              <label htmlFor="relief-chat-input" className="sr-only">
+                {t('chat.inputLabel')}
+              </label>
+              <textarea
+                id="relief-chat-input"
+                ref={inputRef}
+                rows={1}
+                value={draft}
+                onChange={autoGrow}
+                onKeyDown={onKeyDown}
+                placeholder={t('chat.inputPlaceholder')}
+                aria-describedby="relief-chat-help"
+                className={cn(
+                  'max-h-40 min-h-[52px] w-full resize-none rounded-xl border border-navy-200 bg-white py-3.5 pl-4 pr-12 text-[15px] leading-relaxed text-navy-800',
+                  'placeholder:text-navy-400',
+                  'focus-visible:outline-none focus-visible:border-dispatch-500 focus-visible:ring-2 focus-visible:ring-dispatch-600/30',
+                )}
+              />
+              <Button
+                type="submit"
+                size="icon"
+                disabled={!draft.trim() || waiting}
+                className="absolute bottom-2.5 right-2.5"
+                srLabel={t('chat.send')}
+              >
+                <ArrowUp aria-hidden="true" />
+              </Button>
+            </div>
           </div>
 
           <div

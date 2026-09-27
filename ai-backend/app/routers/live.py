@@ -1,4 +1,23 @@
-"""`POST /api/live/session` — mint one short-lived Gemini Live token."""
+"""
+`POST /api/live/token` — mint a short-lived token for a voice session.
+
+This endpoint is deliberately not a WebSocket proxy. It cannot be: Next.js
+route handlers do not proxy WebSockets, and this service is on a private
+network the browser cannot reach anyway. So the browser mints a token here and
+then opens its own socket straight to Google.
+
+What that means for this route's job: it is the only place in the system where
+an anonymous visitor causes spend against the Gemini quota. It is cheap
+(roughly a second of audio) but it is not free and there is no account to
+attach it to, so the Next-side proxy rate-limits it. This side does not
+duplicate that.
+
+Status codes are the point of this module. A missing key or an unreachable
+Gemini is a **503**, not a 500: 503 is the "come back later or use text"
+signal the UI already knows how to render, whereas a 500 would read as a bug
+in our own code. It must never degrade to a 200 with an empty token — a caller
+that gets a 200 will try to open a socket with nothing to open it with.
+"""
 
 from __future__ import annotations
 
@@ -6,51 +25,29 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Request
 
-from ..gemini_live import GeminiLive, LiveTokenError
-from ..schemas import LiveSessionResponse
+from ..live_tokens import LiveTokenError, mint_live_token
+from ..schemas import LiveTokenResponse
 
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/live", tags=["live"])
 
 
-@router.post(
-    "/session",
-    response_model=LiveSessionResponse,
-    summary="Mint a single-use token for one Gemini Live voice session",
-)
-async def create_live_session(request: Request) -> LiveSessionResponse:
-    """
-    Hand the browser enough to open a Live WebSocket, and nothing more.
+@router.post("/token", response_model=LiveTokenResponse)
+async def post_live_token(request: Request) -> LiveTokenResponse:
+    """Mint one single-use token for one voice session."""
+    from ..config import get_settings  # local import keeps the module graph flat
 
-    **No session, no owner check.** `/chat` is deliberately ungated
-    (`middleware.ts` matches only `/reports`, `/tickets` and `/admin`), because
-    putting a Google round-trip in front of someone asking for help during a
-    disaster is the harm that gating is supposed to avoid. Anonymous intake is
-    therefore a real path here, and this endpoint must not become a way to
-    require a login before someone can say they need rescuing.
+    settings = getattr(request.app.state, "settings", None) or get_settings()
 
-    The credential is bounded instead: single-use, short-lived, and scoped to a
-    session that has to start within ~2 minutes. That is what stands in for an
-    identity check, and it is a weaker control — see the rate-limiting note in
-    `gemini_live.py`.
-
-    **502, not 503.** The two outages in this system are distinct and their
-    copy is pinned. A 503 means "the ticket cannot be saved" — the database is
-    down. A token failure means Gemini's auth endpoint is unhappy, and the
-    honest thing to tell a reporter is that *voice* is starting unavailable,
-    not that their report is lost. Collapsing them would send someone looking
-    for a database problem that does not exist.
-    """
-    service: GeminiLive = request.app.state.live
     try:
-        grant = await service.mint()
+        minted = await mint_live_token(settings)
     except LiveTokenError as exc:
-        log.warning("live session refused: %s", exc)
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    return LiveSessionResponse(
-        token=grant.token,
-        expires_at=grant.expires_at,
-        model=grant.model,
-        ws_url=grant.ws_url,
+        log.warning("live token refused: %s", exc)
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    return LiveTokenResponse(
+        ws_url=minted.ws_url,
+        token=minted.token,
+        expires_at=minted.expires_at,
     )

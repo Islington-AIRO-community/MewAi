@@ -18,3 +18,9 @@ pytest==8.3.4
 # report green while the assertions never ran. `asyncio_mode = auto` below is
 # what makes a bare `async def test_` execute.
 pytest-asyncio==0.25.2
+
+# Used *only* by the opt-in live end-to-end test (`FLARE_LIVE_E2E=1`).
+# It happens to be installed transitively by `uvicorn[standard]`, but relying on
+# that would break the test the day uvicorn drops it — and it would fail only on
+# the one run you can least afford to have fail mysteriously.
+websockets==14.1
