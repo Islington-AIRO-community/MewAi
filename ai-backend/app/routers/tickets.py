@@ -7,8 +7,10 @@ required-attribute rules before writing, so a client that skips the review form
 without a reporter name, a dialable number, a summary, a location and at least
 one support class.
 
-`GET /`, `GET /stats` and `PATCH /{id}/status` exist for the admin work that
-comes next. They are read/write primitives with no UI attached yet.
+`GET /`, `GET /stats` and `PATCH /{id}/status` are the admin surface. `GET /`
+filters in SQL — `?status=` plus a repeatable `?support=` — rather than returning
+the queue for the caller to narrow, because the proxy caps a page at 100 rows and
+post-filtering a truncated list can only hide matches.
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ from ..follow_up_service import FollowUpService
 from ..schemas import (
     FollowUpRequest,
     FollowUpResponse,
+    SupportType,
     Ticket,
     TicketClaim,
     TicketCreate,
@@ -163,6 +166,15 @@ async def list_tickets(
         alias="status",
         description="Filter by lifecycle status.",
     ),
+    support_filter: list[SupportType] | None = Query(
+        default=None,
+        alias="support",
+        description=(
+            "Keep tickets needing any of these support types. Repeatable: "
+            "`?support=medical&support=rescue` is the union, not the "
+            "intersection, because one ticket can need both."
+        ),
+    ),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ) -> TicketListResponse:
@@ -177,7 +189,12 @@ async def list_tickets(
     module docstring on `app/api/ai/admin/tickets/route.ts`.
     """
     store = _store(request)
-    total, page = await store.list(status=status_filter, limit=limit, offset=offset)
+    total, page = await store.list(
+        status=status_filter,
+        support=support_filter,
+        limit=limit,
+        offset=offset,
+    )
     return TicketListResponse(total=total, tickets=page)
 
 
