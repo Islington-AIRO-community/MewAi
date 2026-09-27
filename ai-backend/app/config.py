@@ -44,6 +44,31 @@ class Settings(BaseSettings):
     gemini_timeout_seconds: float = 30.0
     gemini_max_output_tokens: int = 1536
 
+    # ---- Gemini Live (voice) ------------------------------------------
+    # The Live API is a different surface from `generateContent` above: a
+    # WebSocket, a different API version, and an ephemeral-token handshake.
+    # `gemini_live_api_version` is pinned to v1alpha on purpose — verified
+    # against the live service, v1beta opens a socket but *rejects*
+    # `proactivity`, so v1alpha is the only version that can turn proactive
+    # audio on. See `live_tokens.py` for the rest of what was pinned.
+    gemini_live_api_version: str = "v1alpha"
+    gemini_live_model: str = "gemini-3.8-live"
+    # `Charon` is the "Informative" prebuilt voice. Note that Gemini does NOT
+    # validate this: an unknown name is accepted at setup and silently falls
+    # back to a default voice, so a typo here is invisible. It is pinned in
+    # the ephemeral token and logged on mint for that reason.
+    gemini_live_voice: str = "Charon"
+    gemini_live_language: str = "en-US"
+    # The token authorises a browser to open a socket against our quota. It is
+    # minted per session and single-use, so keep it short.
+    gemini_live_token_ttl_seconds: int = 900
+    gemini_live_token_timeout_seconds: float = 15.0
+    # How long a turn of silence must be before the server considers the
+    # reporter finished speaking. Longer than the default because a stressed
+    # person pauses mid-sentence, and a cut-off sentence loses a fact.
+    gemini_live_silence_duration_ms: int = 900
+    gemini_live_start_of_speech_sensitivity: str = "START_SENSITIVITY_HIGH"
+
     # ---- Postgres -----------------------------------------------------
     database_url: str = Field(
         default="",

@@ -4,7 +4,8 @@ FastAPI application for the FLARE AI chat and relief-ticket intake.
 Responsibilities kept deliberately narrow:
 
   * own the Gemini client and the Postgres pool for the process lifetime
-  * expose `/api/chat/message`, `/api/tickets*`, `/api/health`, `/api/ready`
+  * expose `/api/chat/message`, `/api/live/token`, `/api/tickets*`,
+    `/api/health`, `/api/ready`
   * nothing about the Next.js app's rendering, types or styling
 
 The Next.js side reaches this service through its own `/api/ai/*` proxy
@@ -28,7 +29,7 @@ from .config import get_settings
 from .db import TicketStore
 from .follow_up_service import FollowUpService
 from .gemini import Gemini
-from .routers import chat, health, tickets
+from .routers import chat, health, live, tickets
 
 logging.basicConfig(
     level=logging.INFO,
@@ -89,6 +90,7 @@ app.add_middleware(
 
 app.include_router(health.router, prefix="/api")
 app.include_router(chat.router, prefix="/api")
+app.include_router(live.router, prefix="/api")
 app.include_router(tickets.router, prefix="/api")
 
 

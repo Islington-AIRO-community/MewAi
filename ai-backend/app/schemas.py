@@ -158,6 +158,21 @@ class ChatResponse(BaseModel):
     degraded: bool = False
 
 
+class LiveTokenResponse(BaseModel):
+    """
+    Everything the browser needs to open a Live voice socket.
+
+    Note what is absent: the Gemini key, the model's config, and this service's
+    own address. The config is pinned into the token server-side, so there is
+    nothing here for a modified client to change. `ws_url` is Google, not us,
+    so handing it over reveals no internal topology.
+    """
+
+    ws_url: str
+    token: str
+    expires_at: datetime
+
+
 # ---------------------------------------------------------------------- #
 # Tickets
 # ---------------------------------------------------------------------- #

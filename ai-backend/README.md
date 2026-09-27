@@ -92,7 +92,7 @@ curl localhost:8000/api/ready
 ```
 
 ```bash
-.venv/bin/python -m pytest app/tests -q   # 43 tests, no model calls, no quota
+.venv/bin/python -m pytest app/tests -q   # 153 tests, no model calls, no quota
 ```
 
 ## Endpoints

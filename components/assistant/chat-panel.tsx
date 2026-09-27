@@ -246,6 +246,15 @@ export function ChatPanel({
 
   const results = filtered ?? messages;
   const micActive = voiceState === 'listening';
+  // Three states, three different meanings, so three different labels. A single
+  // "mute" label on a button that is really "start a voice session" is how a
+  // control ends up doing nothing and looking broken.
+  const micIdle = voiceState === 'idle' || voiceState === 'error';
+  const micLabel = micIdle
+    ? 'Start a voice conversation'
+    : micActive
+      ? 'Mute microphone'
+      : 'Unmute microphone';
 
   return (
     <div className={cn('flex min-h-0 flex-1 flex-col', className)}>
@@ -499,10 +508,10 @@ export function ChatPanel({
               size="iconLg"
               onClick={onToggleMic}
               aria-pressed={micActive}
-              srLabel={micActive ? 'Mute microphone' : 'Unmute microphone'}
+              srLabel={micLabel}
               className="shrink-0"
             >
-              {micActive ? <MicOff aria-hidden="true" /> : <Mic aria-hidden="true" />}
+              {micIdle ? <Mic aria-hidden="true" /> : micActive ? <MicOff aria-hidden="true" /> : <Mic aria-hidden="true" />}
             </Button>
 
             <div className="relative min-w-0 flex-1">

@@ -15,19 +15,31 @@ npm run build       # runs lint + typecheck, then prerenders
 npm start           # serve the build (needs a prior `npm run build`)
 ```
 
-Node 20+ (developed on 22). There is **no JS test suite and no JS test runner** —
-no jest/vitest/playwright/cypress is installed and there is no `test` script.
-Don't add an `npm test` invocation or assume fixtures exist. The only automated
-verification of the front end is `typecheck` + `lint` + `build`; all three pass
-clean, so treat any new output from them as a regression you introduced.
+Node 20+ (developed on 22). There **is now** a JS test suite — `vitest`, added for
+the Gemini Live protocol rules. It is deliberately tiny: one file,
+`lib/live-voice/session.test.ts`, running in a `node` environment with no jsdom.
+
+```bash
+npm test             # vitest run
+npm run test:watch
+```
+
+It exists because those rules fail *silently* — a cumulative transcript read as
+incremental produces a rambling reporter, and an incremental one read as
+cumulative produces the last word of every sentence. Neither looks like a bug,
+so they are asserted rather than described. Everything else in the front end is
+still verified only by `typecheck` + `lint` + `build`; all three pass clean, so
+treat any new output from them as a regression you introduced.
 
 `build` already runs lint and typecheck, so run `build` alone as the full gate.
+Note it is `build` — not `test` — that catches types in the test files too, since
+`tsconfig` includes them.
 
-The Python service is separate and **does** have tests:
+The Python service is separate and **also** has tests:
 
 ```bash
 cd ai-backend
-.venv/bin/python -m pytest app/tests -q   # 86 tests, no model calls, no quota
+.venv/bin/python -m pytest app/tests -q   # 153 tests, no model calls, no quota
 ./dev.sh                                 # venv + deps + uvicorn on :8000
 docker compose up -d db                  # Postgres
 ```
@@ -206,11 +218,17 @@ Three things an agent will get wrong here:
 2. **`app/api/ai/*` returns 502, not 500, when the backend is down.** The store
    catches and falls back to the scripted offline set. Don't "fix" this into a
    throw.
-3. **The wire format is split.** The response *envelope* is snake_case
-   (`next_questions`, `is_complete`, `safety_note`), the `draft` object is
-   camelCase (`reporterName`, `victimPhone`, `supportNeeded`,
-   `onBehalfOfOther`), and `missing`/`next_questions` use camelCase `SlotName`
-   values as keys. `lib/ai-client.ts` encodes all of this; don't rename.
+3. **The wire format is split, and the `draft` is snake_case — this line was
+   previously wrong here and the tests caught it.** The response *envelope* is
+   snake_case (`next_questions`, `is_complete`, `safety_note`), the `draft`
+   object is **also** snake_case (`reporter_name`, `victim_phone`,
+   `support_needed`, `on_behalf_of_other`), and only `missing`/`next_questions`
+   use camelCase `SlotName` values as *keys*. `lib/ai-client.ts` translates all
+   of this into the camelCase TypeScript shapes; don't rename the wire. The
+   asymmetry is pinned in `ai-backend/app/tests/test_chat_response.py`, which
+   asserts the exact JSON keys a real `TestClient` emits, because a draft read
+   with the wrong casing does not error — it just renders an empty review form
+   and offers a complete-looking ticket with no summary.
 
 ### Readiness is never the model's call
 
@@ -338,6 +356,102 @@ ever bind it to a public interface, add the check in the router first. The
 owner-scoped endpoints are the exception: they check `x-ticket-owner`
 themselves, because the secret decides who may read PII.
 
+**Voice is the one path that does not go through the proxy for its media.**
+`POST /api/live/token` mints a short-lived, single-use Gemini token, and the
+browser then opens a `wss://` socket to Gemini *directly* — audio never passes
+through our servers. The practical consequences:
+
+- The backend's own `/api/live/token` needs no session check, but it does spend
+  quota on every call, which is why the Next route caps it per IP. Widen that
+  cap only with a reason; it is the only thing between a public page and a
+  billable endpoint reachable by anyone with `curl`.
+- The `GEMINI_API_KEY` still never leaves the backend. The browser gets a
+  scoped token, not the key, and `test_live_e2e.py` asserts the key is absent
+  from the URL it hands out.
+- Because the socket is direct, a Next redeploy or a 502 from `_shared.ts`
+  cannot kill a voice session already in progress — and a *reconnect* after a
+  token expires needs a fresh mint, not a reused token. Tokens are single-use;
+  `uses: 1` is set server-side and a resume reuses the original token.
+- Everything else still goes through the proxy. Voice is not a precedent for
+  routing ticket reads around it.
+
+### The Live protocol rules are pinned, not described
+
+`lib/live-voice/session.ts` is a state machine over the Gemini socket, and its
+rules were reverse-engineered by watching a real connection rather than read off
+a schema. They are pinned in `lib/live-voice/session.test.ts` (31 tests) because
+each one fails silently. If you change that file, expect the tests to argue.
+
+- `inputTranscription` is **cumulative** — keep the latest value.
+- `outputTranscription` is **incremental** — concatenate fragments.
+- A turn ends on `voiceActivity.endOfSpeech`, **not** `turnComplete`, which the
+  service does not reliably send. Waiting for it drops the last turn, which is
+  routinely the location.
+- `interrupted: true` discards the partial assistant turn *and* flushes queued
+  audio. It is what stops the reporter being told a crew is on the way when it
+  is not.
+- The session is always-on: stream silence continuously and never send
+  `audioStreamEnd` between turns, or the service decides the reporter finished.
+- **Input audio goes out as `realtimeInput.audio`, never `realtimeInput.mediaChunks`.**
+  `mediaChunks` is deprecated. On **v1beta** the service rejects it by name
+  (`realtime_input.media_chunks is deprecated. Use audio, video, or text
+  instead`) — which is how it was found. On **v1alpha**, the version we pin for
+  `proactivity`, it is far worse: the frame is *accepted and silently
+  discarded*. Every microphone sample went nowhere, the model heard pure
+  silence, VAD never fired, and it never spoke — with `setupComplete` arriving,
+  the status reading "Listening", the waveform animating, and no error or log
+  line on either end. The text path has the same trap: `realtimeInput.text` is a
+  bare string, and `clientContent` has **no** `parts` field at all.
+- **A deprecated field that the pinned API version quietly ignores is the worst
+  shape a protocol bug can take.** It cannot be found by reading our code, and
+  the loud version of it lives on an endpoint we never call.
+  `test_service_returns_audio_for_a_turn` exists for that reason: every other
+  live test passes on a connected, healthy, completely inert session. That one
+  requires audio *back*.
+- The client's `setup` is near-empty on purpose. The model, voice, system
+  instruction, and turn-taking config are pinned in the token server-side, and
+  a client that contradicts them is ignored. A test asserts the client sends
+  none of it, because "let the browser pick the model" is the kind of change
+  that moves a system prompt into a place the code review stopped looking.
+- **The client sends exactly one message: `{"setup": ...}`.** It used to send a
+  second, top-level `realtimeInputConfig`. That field is *not a client message* —
+  the wire accepts only `setup`, `clientContent`, `realtimeInput`,
+  `toolResponse` — so the service replied `1007 Unknown name "realtimeInputConfig"`
+  and closed, which reached the reporter as an unexplained "Voice unavailable".
+  Turn-taking is pinned in `live_connect_setup()`, which also carries
+  `activityHandling: START_OF_ACTIVITY_INTERRUPTS`; a client-side VAD block
+  would have overridden that and quietly removed barge-in.
+- **A server `error` frame must be surfaced, not swallowed.** The service
+  explains itself and *then* closes, so ignoring `error` reduced every config
+  rejection to an indistinguishable "the connection dropped". `session.ts`
+  logs the service's own message and fails with `kind: 'rejected'`, which is
+  terminal and deliberately not retried.
+- **The WebSocket close code carries the only evidence of why a socket died**,
+  because the socket runs browser→Gemini and nothing on our servers sees it.
+  `onclose` reads it, logs it, and puts it in the message. It used to discard
+  the event, making 1006 (handshake refused), 1008 (policy) and 1000 (normal)
+  one identical sentence.
+- Frames may arrive as `ArrayBuffer`, not only as `string` — `binaryType` is
+  `'arraybuffer'`. A `typeof data === 'string'` guard discards them silently.
+
+Verified against the live service with the opt-in suite, which is the only way
+to check any of the above:
+
+```bash
+cd ai-backend
+FLARE_LIVE_E2E=1 .venv/bin/python -m pytest app/tests/test_live_e2e.py -q
+```
+
+It forces `AF_INET`. Google's host publishes AAAA records, and on a network
+with no IPv6 route asyncio takes the AAAA address and never falls back, so the
+handshake times out and a healthy service looks broken. Browsers use
+happy-eyeballs and are unaffected — it is only the test that needs the hint.
+
+Transcript handling on the Next side: `useAiChat.ingestTranscript()` replays
+the whole conversation in **one** `/api/ai/chat` call rather than a call per
+spoken turn, so `missing_slots()` sees the same thing either way and the draft
+is not rebuilt turn by turn.
+
 ### Two failure codes, two different outages
 
 Do not collapse these. The distinction is the whole reason the reporter's
@@ -399,6 +513,26 @@ ranked so the crew that must arrive first leads (`medical → rescue → securit
 relief-supplies`). `security` was added along with the `dept-security`
 department; both are new, and `CATEGORY_ICONS` in `app/dashboard/page.tsx` is a
 separate hand-maintained map that also needed the entry.
+
+### The capture worklet is tested, because its bug is invisible
+
+`public/pcm-capture.worklet.js` is loaded into a `node:vm` with a stubbed
+`AudioWorkletProcessor` and driven with synthetic samples
+(`lib/live-voice/pcm-capture.worklet.test.ts`). The microphone is the only part
+that needs hardware; framing, resampling and flushing do not.
+
+It is tested because of a bug that looked like a working product. The frame size
+was parsed from `processorOptions` and then never assigned, so
+`outPos >= this.frameSamples` compared against `undefined` — always false —
+`flush()` never ran, and **not one audio sample was ever posted**. The session
+connected, `setupComplete` arrived, the waveform animated, the status said
+"Listening", and Gemini received pure silence so it never replied. Every signal
+the UI could see was healthy; the broken one was the only one it could not.
+`audio.ts` was fine. Nothing was logged, because nothing threw.
+
+`audio.ts` and the playback worklet remain untested — those need a real
+`AudioContext` and an output device, and a mock would only assert that the mock
+works.
 
 ## Time is frozen — this causes hydration bugs
 
