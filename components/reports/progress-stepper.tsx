@@ -6,6 +6,7 @@ import { Check, CircleDashed, Clock3 } from 'lucide-react';
 import { STAGES, STAGE_IDS, type Report, type StageId } from '@/lib/types';
 import { cn, shortStamp } from '@/lib/utils';
 import { usePrefersReducedMotion } from '@/lib/hooks';
+import { useLocale } from '@/lib/i18n';
 
 function stageIndex(stage: StageId): number {
   return STAGE_IDS.indexOf(stage);
@@ -34,6 +35,7 @@ export function ProgressStepper({
   className,
   detailed = false,
 }: StepperProps) {
+  const { t, label } = useLocale();
   const current = stageIndex(currentStage);
   const reduced = usePrefersReducedMotion();
 
@@ -44,7 +46,7 @@ export function ProgressStepper({
   return (
     <ol
       className={cn('w-full', className)}
-      aria-label="Report progress"
+      aria-label={t('stepper.ariaLabel')}
     >
       {STAGES.map((stage, i) => {
         const done = i < current;
@@ -52,7 +54,11 @@ export function ProgressStepper({
         const pending = i > current;
         const stamp = stageTimestamps?.[stage.id];
         const Icon = stage.icon;
-        const stateLabel = done ? 'Completed' : active ? 'In progress' : 'Not started';
+        const stateLabel = done
+          ? t('stepper.done')
+          : active
+            ? t('stepper.active')
+            : t('stepper.pending');
 
         return (
           <li key={stage.id} className="relative flex gap-3 pb-5 last:pb-0 sm:gap-4">
@@ -115,7 +121,7 @@ export function ProgressStepper({
                     size === 'lg' && 'text-base',
                   )}
                 >
-                  {stage.label}
+                  {label('stage', stage.id, stage.label)}
                 </p>
                 {active && (
                   <span className="inline-flex items-center gap-1 rounded-full bg-navy-900 px-2 py-0.5 text-2xs font-bold uppercase tracking-[0.08em] text-white">
@@ -123,7 +129,7 @@ export function ProgressStepper({
                       <span className="absolute inset-0 animate-pulse-ring rounded-full bg-white/70" />
                       <span className="relative size-1.5 rounded-full bg-white" />
                     </span>
-                    Now
+                    {t('stepper.now')}
                   </span>
                 )}
                 {stamp && (
@@ -141,8 +147,8 @@ export function ProgressStepper({
               )}
 
               <span className="sr-only">
-                Step {i + 1} of {STAGES.length}: {stateLabel}.
-                {stamp ? ` Completed at ${shortStamp(stamp)}.` : ''}
+                {t('stepper.srStep', { n: i + 1, total: STAGES.length, state: stateLabel })}
+                {stamp ? t('stepper.srStamp', { stamp: shortStamp(stamp) }) : ''}
               </span>
             </div>
           </li>
@@ -157,6 +163,7 @@ export function ProgressStepper({
  * ------------------------------------------------------------------ */
 
 export function StepperBar({ report, className }: { report: Report; className?: string }) {
+  const { t, label } = useLocale();
   const current = stageIndex(report.currentStage);
   const reduced = usePrefersReducedMotion();
   const pct = ((current + 1) / STAGES.length) * 100;
@@ -170,8 +177,12 @@ export function StepperBar({ report, className }: { report: Report; className?: 
           aria-valuemin={1}
           aria-valuemax={STAGES.length}
           aria-valuenow={current + 1}
-          aria-valuetext={`${STAGES[current].label}, step ${current + 1} of ${STAGES.length}`}
-          aria-label="Report progress"
+          aria-valuetext={t('stepper.ariaValue', {
+            stage: label('stageShort', STAGES[current].id, STAGES[current].short),
+            n: current + 1,
+            total: STAGES.length,
+          })}
+          aria-label={t('stepper.ariaLabel')}
         >
           <motion.span
             className={cn(
@@ -204,7 +215,7 @@ export function StepperBar({ report, className }: { report: Report; className?: 
               )}
               aria-hidden="true"
             >
-              {stage.short}
+              {label('stageShort', stage.id, stage.short)}
             </li>
           );
         })}

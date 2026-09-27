@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { AlertCircle, ClipboardList, Loader2, Mic, RefreshCw, ShieldAlert } from 'lucide-react';
+import { ClipboardList, Loader2, Mic, RefreshCw, ShieldAlert } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import {
@@ -10,7 +10,7 @@ import {
 } from '@/components/assistant/ticket-status';
 import { PRIORITIES, SUPPORT_TYPE_LIST, type SupportType } from '@/lib/types';
 import {
-  describePortalError,
+  portalErrorKey,
   fetchAdminQueue,
   fetchAdminStats,
   fetchAdminTranscript,
@@ -22,6 +22,11 @@ import { formatDateTime } from '@/lib/time';
 import type { StoredTicket, TicketStatus } from '@/lib/ai-client';
 import { cn } from '@/lib/utils';
 import { TicketTranscriptView } from '@/components/assistant/ticket-transcript';
+import { Eyebrow } from '@/components/ui/primitives';
+import { LoadingBlock, Notice, PageHeader } from '@/components/ui/patterns';
+import { FilterChip } from '@/components/ui/inputs';
+import { intlLocale } from '@/lib/i18n-strings';
+import { useLocale } from '@/lib/i18n';
 
 /**
  * The response team's queue.
@@ -49,9 +54,11 @@ const STATUS_ORDER: TicketStatus[] = [
 ];
 
 export default function AdminQueuePage() {
+  const { t, label, locale } = useLocale();
   const [tickets, setTickets] = React.useState<StoredTicket[] | null>(null);
   const [stats, setStats] = React.useState<TicketStats | null>(null);
-  const [error, setError] = React.useState<string | null>(null);
+  // A translation key, not a sentence — see `portalErrorKey`.
+  const [errorKey, setErrorKey] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [filter, setFilter] = React.useState<TicketStatus | 'all'>('all');
   const [busyId, setBusyId] = React.useState<string | null>(null);
@@ -61,10 +68,10 @@ export default function AdminQueuePage() {
     const result = await fetchAdminQueue(status === 'all' ? undefined : status);
     if (result.ok) {
       setTickets(result.value.tickets);
-      setError(null);
+      setErrorKey(null);
     } else {
       setTickets(null);
-      setError(describe(result.error.kind));
+      setErrorKey(queueErrorKey(result.error.kind));
     }
     setLoading(false);
   }, []);
@@ -113,86 +120,67 @@ export default function AdminQueuePage() {
       setStatsNonce((n) => n + 1);
       return;
     }
-    setError(describe(result.error.kind));
+    setErrorKey(queueErrorKey(result.error.kind));
   };
 
   return (
-    <div className="pb-32 sm:pb-16">
-      <div className="border-b border-navy-200 bg-white">
-        <div className="container py-7 sm:py-9">
-          <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
-            <div>
-              <div className="flex items-center gap-2.5">
-                <span className="grid size-9 place-items-center rounded-xl bg-navy-100 text-navy-700">
-                  <ClipboardList className="size-4.5" aria-hidden="true" />
-                </span>
-                <h1 className="text-2xl font-extrabold tracking-tight text-navy-900 sm:text-3xl">
-                  Response queue
-                </h1>
-              </div>
-              <p className="mt-2 max-w-2xl text-sm leading-relaxed text-navy-500">
-                Every ticket filed through the assistant, oldest status first. Moving
-                one here is what a reporter sees on their portal.
-              </p>
-            </div>
-
-            <Button
-              variant="outline"
-              size="lg"
-              onClick={() => void load(filter)}
-              disabled={loading}
-            >
-              <RefreshCw className={cn('size-4', loading && 'animate-spin')} aria-hidden="true" />
-              Refresh
-            </Button>
-          </div>
-
-          <div className="mt-5 flex flex-wrap gap-1.5">
+    // `data-no-translate`: the response queue is somebody else's emergency, read
+    // by an operator. It carries reporter names, phone numbers and addresses
+    // that no model should touch, and its status vocabulary is operator-only
+    // wording that has to keep saying exactly what it says. A Nepali-speaking
+    // operator gets this from the curated tables, which are reviewed — not from
+    // a model guessing at triage terminology.
+    <div className="pb-[var(--content-bottom)] sm:pb-16" data-no-translate>
+      <PageHeader
+        icon={ClipboardList}
+        title={t('admin.title')}
+        description={t('admin.subtitle')}
+        actions={
+          <Button
+            variant="outline"
+            size="lg"
+            onClick={() => void load(filter)}
+            disabled={loading}
+          >
+            <RefreshCw className={cn('size-4', loading && 'animate-spin')} aria-hidden="true" />
+            {t('admin.refresh')}
+          </Button>
+        }
+      >
+        <div className="flex flex-wrap gap-1.5">
+          <FilterChip active={filter === 'all'} onClick={() => setFilter('all')}>
+            {t('admin.filter.all')}
+          </FilterChip>
+          {STATUS_ORDER.map((status) => (
             <FilterChip
-              active={filter === 'all'}
-              onClick={() => setFilter('all')}
-              label="All"
-            />
-            {STATUS_ORDER.map((status) => (
-              <FilterChip
-                key={status}
-                active={filter === status}
-                onClick={() => setFilter(status)}
-                label={status.replace('_', ' ')}
-              />
-            ))}
-          </div>
+              key={status}
+              active={filter === status}
+              onClick={() => setFilter(status)}
+            >
+              {label('adminStatus', status, status.replace('_', ' '))}
+            </FilterChip>
+          ))}
         </div>
-      </div>
+      </PageHeader>
 
       <div className="container py-6 sm:py-8">
         <QueueStats stats={stats} />
 
-        {error && (
-          <p className="mb-4 flex items-start gap-2 rounded-xl border border-alert-200 bg-alert-50 px-3.5 py-2.5 text-xs font-semibold leading-relaxed text-alert-800">
-            <ShieldAlert className="mt-px size-3.5 shrink-0" aria-hidden="true" />
-            <span>{error}</span>
-          </p>
+        {errorKey && (
+          <Notice tone="caution" icon={ShieldAlert} className="mb-4">
+            {t(errorKey)}
+          </Notice>
         )}
 
-        {loading && (
-          <p
-            className="flex items-center justify-center gap-2 py-16 text-sm text-navy-500"
-            role="status"
-            aria-live="polite"
-          >
-            <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-            Loading the queue…
-          </p>
-        )}
+        {loading && <LoadingBlock label={t('admin.loading')} />}
 
         {!loading && tickets && tickets.length === 0 && (
           <Card className="p-8 text-center">
             <h2 className="text-base font-bold tracking-tight text-navy-900">
-              Nothing in the queue
+              {t('admin.empty.title')}
             </h2>
             <p className="mx-auto mt-1.5 max-w-sm text-sm leading-relaxed text-navy-500">
-              Tickets appear here as soon as they are filed.
+              {t('admin.empty.body')}
             </p>
           </Card>
         )}
@@ -230,6 +218,7 @@ export default function AdminQueuePage() {
  * reading it.
  */
 function QueueStats({ stats }: { stats: TicketStats | null }) {
+  const { t, label } = useLocale();
   if (!stats) return null;
 
   const support = SUPPORT_TYPE_LIST.map((s) => [s.id, stats.by_support[s.id] ?? 0] as const)
@@ -237,13 +226,13 @@ function QueueStats({ stats }: { stats: TicketStats | null }) {
     .sort((a, b) => b[1] - a[1]);
 
   return (
-    <section aria-label="Queue summary" className="mb-5">
+    <section aria-label={t('admin.stats.ariaLabel')} className="mb-5">
       <div className="grid gap-3.5 sm:grid-cols-2 xl:grid-cols-4">
-        <CountTile label="Filed in total" value={stats.total} />
+        <CountTile label={t('admin.stats.total')} value={stats.total} />
         {STATUS_ORDER.map((status) => (
           <CountTile
             key={status}
-            label={status.replace('_', ' ')}
+            label={label('adminStatus', status, status.replace('_', ' '))}
             value={stats.by_status[status] ?? 0}
           />
         ))}
@@ -251,23 +240,20 @@ function QueueStats({ stats }: { stats: TicketStats | null }) {
 
       {support.length > 0 && (
         <Card className="mt-3.5 p-4 sm:p-5">
-          <h2 className="text-2xs font-bold uppercase tracking-[0.06em] text-navy-400">
-            What people are asking for
-          </h2>
+          <Eyebrow as="h2">{t('admin.stats.supportTitle')}</Eyebrow>
           <ul className="mt-3 flex flex-wrap gap-2">
             {support.map(([id, n]) => (
               <li
                 key={id}
                 className="flex items-center gap-2 rounded-full bg-navy-50 px-3 py-1.5 text-2xs font-semibold text-navy-700"
               >
-                {supportName(id)}
+                {supportName(id, label)}
                 <span className="nums font-mono font-bold text-navy-900">{n}</span>
               </li>
             ))}
           </ul>
           <p className="mt-2.5 text-2xs leading-relaxed text-navy-400">
-            A ticket can need more than one kind of help, so these add up to more than
-            the filed total.
+            {t('admin.stats.supportFootnote')}
           </p>
         </Card>
       )}
@@ -278,9 +264,7 @@ function QueueStats({ stats }: { stats: TicketStats | null }) {
 function CountTile({ label, value }: { label: string; value: number }) {
   return (
     <Card className="p-4">
-      <p className="text-2xs font-bold uppercase tracking-[0.06em] text-navy-400">
-        {label}
-      </p>
+      <Eyebrow>{label}</Eyebrow>
       <p className="nums mt-1.5 font-mono text-2xl font-extrabold text-navy-900">
         {value}
       </p>
@@ -288,8 +272,15 @@ function CountTile({ label, value }: { label: string; value: number }) {
   );
 }
 
-function supportName(id: string): string {
-  return SUPPORT_TYPE_LIST.find((s) => s.id === id)?.shortLabel ?? id;
+type LabelFn = (
+  table: import('@/lib/i18n-strings').Table,
+  id: string,
+  english: string,
+) => string;
+
+function supportName(id: string, label: LabelFn): string {
+  const meta = SUPPORT_TYPE_LIST.find((s) => s.id === id);
+  return meta ? label('support', meta.id, meta.shortLabel) : id;
 }
 
 function QueueRow({
@@ -301,6 +292,7 @@ function QueueRow({
   busy: boolean;
   onAdvance: (ticket: StoredTicket, status: TicketStatus) => Promise<void>;
 }) {
+  const { t, label, locale } = useLocale();
   return (
     <Card className="p-4 sm:p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -315,30 +307,41 @@ function QueueRow({
             {ticket.summary}
           </p>
           <p className="mt-1.5 text-2xs leading-relaxed text-navy-500">
-            {ticketStatusDetail(ticket.status)}
+            {label('ticketStatusDetail', ticket.status, ticketStatusDetail(ticket.status))}
           </p>
         </div>
       </div>
 
       <dl className="mt-4 grid gap-x-6 gap-y-2.5 border-t border-navy-100 pt-3.5 text-xs sm:grid-cols-3">
-        <Row label="Reporter" value={`${ticket.reporter_name} · ${ticket.reporter_phone}`} />
-        <Row label="Location" value={ticket.location} />
-        <Row label="Support" value={supportLabel(ticket.support_needed)} />
         <Row
-          label="Priority"
-          value={PRIORITIES[ticket.urgency]?.label ?? ticket.urgency}
+          label={t('admin.row.reporter')}
+          value={`${ticket.reporter_name} · ${ticket.reporter_phone}`}
+        />
+        <Row label={t('admin.row.location')} value={ticket.location} />
+        <Row
+          label={t('admin.row.support')}
+          value={supportLabel(ticket.support_needed, label)}
         />
         <Row
-          label="People"
+          label={t('admin.row.priority')}
+          value={label(
+            'priority',
+            ticket.urgency,
+            PRIORITIES[ticket.urgency]?.label ?? ticket.urgency,
+          )}
+        />
+        <Row
+          label={t('admin.row.people')}
           value={ticket.people_affected === null ? '—' : String(ticket.people_affected)}
         />
-        <Row label="Filed" value={formatDateTime(ticket.created_at)} />
+        <Row
+          label={t('admin.row.filed')}
+          value={formatDateTime(ticket.created_at, intlLocale(locale))}
+        />
       </dl>
 
       <div className="mt-4 flex flex-wrap items-center gap-1.5 border-t border-navy-100 pt-3.5">
-        <span className="mr-1 text-2xs font-bold uppercase tracking-[0.06em] text-navy-400">
-          Move to
-        </span>
+        <Eyebrow as="span" className="mr-1">{t('admin.moveTo')}</Eyebrow>
         {STATUS_ORDER.map((status) => (
           <Button
             key={status}
@@ -348,13 +351,13 @@ function QueueRow({
             disabled={busy || status === ticket.status}
             onClick={() => void onAdvance(ticket, status)}
           >
-            {status.replace('_', ' ')}
+            {label('adminStatus', status, status.replace('_', ' '))}
           </Button>
         ))}
         {busy && (
           <span className="ml-1 flex items-center gap-1.5 text-2xs text-navy-500">
             <Loader2 className="size-3 animate-spin" aria-hidden="true" />
-            Saving…
+            {t('admin.saving')}
           </span>
         )}
       </div>
@@ -385,8 +388,12 @@ function QueueRow({
  * it", and a component that renders nothing for both has taken that ability away.
  */
 function AdminTranscript({ ticketId }: { ticketId: string }) {
+  const { t } = useLocale();
   const [state, setState] = React.useState<
-    { status: 'idle' } | { status: 'loading' } | { status: 'ready'; turns: TranscriptTurn[] } | { status: 'error'; message: string }
+    | { status: 'idle' }
+    | { status: 'loading' }
+    | { status: 'ready'; turns: TranscriptTurn[] }
+    | { status: 'error'; errorKey: string }
   >({ status: 'idle' });
 
   if (state.status === 'idle') {
@@ -401,13 +408,13 @@ function AdminTranscript({ ticketId }: { ticketId: string }) {
             setState(
               result.ok
                 ? { status: 'ready', turns: result.value.turns }
-                : { status: 'error', message: describePortalError(result.error) },
+                : { status: 'error', errorKey: portalErrorKey(result.error) },
             );
           });
         }}
       >
         <Mic aria-hidden="true" />
-        Read the transcript of the call
+        {t('admin.transcript.read')}
       </Button>
     );
   }
@@ -416,7 +423,7 @@ function AdminTranscript({ ticketId }: { ticketId: string }) {
     return (
       <p className="flex items-center gap-2 text-2xs text-navy-500" role="status" aria-live="polite">
         <Loader2 className="size-3 animate-spin" aria-hidden="true" />
-        Loading the transcript…
+        {t('transcript.loading')}
       </p>
     );
   }
@@ -424,7 +431,7 @@ function AdminTranscript({ ticketId }: { ticketId: string }) {
   if (state.status === 'error') {
     return (
       <p role="alert" className="text-2xs font-semibold leading-relaxed text-alert-700">
-        {state.message}
+        {t(state.errorKey)}
       </p>
     );
   }
@@ -437,51 +444,32 @@ function AdminTranscript({ ticketId }: { ticketId: string }) {
 function Row({ label, value }: { label: string; value: string }) {
   return (
     <div className="min-w-0">
-      <dt className="text-2xs font-bold uppercase tracking-[0.06em] text-navy-400">
-        {label}
-      </dt>
+      <Eyebrow as="dt">{label}</Eyebrow>
       <dd className="mt-0.5 break-words font-semibold text-navy-800">{value}</dd>
     </div>
   );
 }
 
-function FilterChip({
-  active,
-  onClick,
-  label,
-}: {
-  active: boolean;
-  onClick: () => void;
-  label: string;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className={cn(
-        'rounded-full px-3 py-1.5 text-2xs font-bold capitalize transition-colors',
-        active
-          ? 'bg-navy-900 text-white'
-          : 'bg-navy-100 text-navy-600 hover:bg-navy-200',
-      )}
-    >
-      {label}
-    </button>
-  );
-}
-
-function supportLabel(types: SupportType[]): string {
+function supportLabel(types: SupportType[], label: LabelFn): string {
   return types
-    .map((t) => SUPPORT_TYPE_LIST.find((s) => s.id === t)?.shortLabel ?? t)
+    .map((type) => {
+      const meta = SUPPORT_TYPE_LIST.find((s) => s.id === type);
+      return meta ? label('support', meta.id, meta.shortLabel) : type;
+    })
     .join(', ');
 }
 
-function describe(kind: string): string {
-  if (kind === 'forbidden') {
-    return 'Your account is not on the admin allowlist. Set ADMIN_EMAILS to include it.';
-  }
-  if (kind === 'unreachable') return 'The relief service could not be reached.';
-  if (kind === 'unavailable') return 'The ticket database is down. Nothing was changed.';
-  return 'Something went wrong loading the queue.';
+/**
+ * Which failure this is, as a key.
+ *
+ * The `forbidden` case gets its own sentence rather than `portalError`'s
+ * "your account is not allowed to do that": on `/admin` the near-certain cause
+ * is a missing `ADMIN_EMAILS` entry, and an operator reading a 403 needs to know
+ * that rather than being told to contact someone.
+ */
+function queueErrorKey(kind: string): string {
+  if (kind === 'forbidden') return 'admin.error.forbidden';
+  if (kind === 'unreachable') return 'admin.error.unreachable';
+  if (kind === 'unavailable') return 'admin.error.unavailable';
+  return 'admin.error.unknown';
 }

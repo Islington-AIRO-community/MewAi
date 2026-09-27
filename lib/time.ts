@@ -10,13 +10,20 @@
  */
 export const DEMO_NOW = new Date('2026-09-26T06:00:00.000Z');
 
-/** Time-of-day greeting derived from the demo clock (never the real one). */
-export function greetingFor(now: Date = DEMO_NOW): string {
+/**
+ * Time-of-day greeting, as a translation key.
+ *
+ * The hour boundary is deliberately kept here rather than in the dictionary: it
+ * is a fact about the demo clock, while the words for it are chrome. Returning a
+ * key means the call site cannot accidentally render an English greeting into a
+ * Nepali screen, which is the failure this module exists to prevent elsewhere.
+ */
+export function greetingKeyFor(now: Date = DEMO_NOW): string {
   const h = now.getHours();
-  if (h < 5) return 'Still awake';
-  if (h < 12) return 'Good morning';
-  if (h < 18) return 'Good afternoon';
-  return 'Good evening';
+  if (h < 5) return 'time.greeting.awake';
+  if (h < 12) return 'time.greeting.morning';
+  if (h < 18) return 'time.greeting.afternoon';
+  return 'time.greeting.evening';
 }
 
 /**
@@ -31,8 +38,14 @@ export function greetingFor(now: Date = DEMO_NOW): string {
  * `DEMO_NOW`-relative value; see the note at the top of this file for why that
  * distinction is load-bearing rather than stylistic.
  */
-export function formatDateTime(iso: string): string {
+export function formatDateTime(iso: string, locale = 'en-US'): string {
   const parsed = new Date(iso);
   if (Number.isNaN(parsed.getTime())) return '';
-  return parsed.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
+  // `numberingSystem: 'latn'` and not a bare locale tag — see the digits note in
+  // `lib/i18n-strings.ts`. Latin digits in both locales, deliberately.
+  return parsed.toLocaleString(locale, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+    numberingSystem: 'latn',
+  });
 }

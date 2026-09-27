@@ -114,67 +114,33 @@ const config: Config = {
         /* Slightly larger base scale for readability under stress */
         '2xs': ['0.6875rem', { lineHeight: '1rem' }],
       },
-      borderRadius: {
-        '4xl': '2rem',
-        '5xl': '2.5rem',
-      },
       boxShadow: {
         xs: '0 1px 2px 0 rgb(15 23 42 / 0.05)',
         soft: '0 1px 2px 0 rgb(15 23 42 / 0.04), 0 4px 16px -2px rgb(15 23 42 / 0.08)',
         card: '0 1px 3px 0 rgb(15 23 42 / 0.06), 0 12px 32px -8px rgb(15 23 42 / 0.12)',
         lift: '0 2px 4px 0 rgb(15 23 42 / 0.05), 0 24px 48px -12px rgb(15 23 42 / 0.18)',
-        ring: '0 0 0 1px rgb(15 23 42 / 0.06)',
         'glow-rose': '0 0 0 1px rgb(225 29 72 / 0.25), 0 12px 40px -8px rgb(225 29 72 / 0.45)',
-        'glow-navy': '0 0 0 1px rgb(15 23 42 / 0.08), 0 16px 40px -12px rgb(15 23 42 / 0.35)',
-        'inset-top': 'inset 0 1px 0 0 rgb(255 255 255 / 0.06)',
       },
+      /* Only `pulse-ring` and `slide-up` have call sites. The other five were
+         defined here and never used, which is why they are gone rather than
+         merely unused — nothing referenced them. */
       keyframes: {
         'pulse-ring': {
           '0%': { transform: 'scale(0.9)', opacity: '0.7' },
           '70%': { transform: 'scale(1.6)', opacity: '0' },
           '100%': { transform: 'scale(1.6)', opacity: '0' },
         },
-        'pulse-dot': {
-          '0%, 100%': { opacity: '1', transform: 'scale(1)' },
-          '50%': { opacity: '0.45', transform: 'scale(0.85)' },
-        },
-        breathe: {
-          '0%, 100%': { opacity: '0.5', transform: 'scaleY(0.55)' },
-          '50%': { opacity: '1', transform: 'scaleY(1)' },
-        },
-        'shimmer-x': {
-          '0%': { transform: 'translateX(-100%)' },
-          '100%': { transform: 'translateX(100%)' },
-        },
         'slide-up': {
           '0%': { transform: 'translateY(6px)', opacity: '0' },
           '100%': { transform: 'translateY(0)', opacity: '1' },
         },
-        'scan-y': {
-          '0%': { transform: 'translateY(-10%)', opacity: '0' },
-          '20%, 80%': { opacity: '1' },
-          '100%': { transform: 'translateY(1100%)', opacity: '0' },
-        },
-        'sos-flash': {
-          '0%, 100%': { backgroundColor: '#E11D48' },
-          '50%': { backgroundColor: '#A80F32' },
-        },
       },
       animation: {
         'pulse-ring': 'pulse-ring 2.4s cubic-bezier(0.24, 0, 0.38, 1) infinite',
-        'pulse-dot': 'pulse-dot 2s ease-in-out infinite',
-        breathe: 'breathe 1.1s ease-in-out infinite',
-        'shimmer-x': 'shimmer-x 1.8s ease-in-out infinite',
         'slide-up': 'slide-up 0.24s ease-out both',
-        'scan-y': 'scan-y 2.6s ease-in-out infinite',
-        'sos-flash': 'sos-flash 1.4s ease-in-out infinite',
       },
       transitionTimingFunction: {
-        'out-expo': 'cubic-bezier(0.16, 1, 0.3, 1)',
         calm: 'cubic-bezier(0.4, 0, 0.2, 1)',
-      },
-      maxWidth: {
-        prose: '68ch',
       },
     },
   },

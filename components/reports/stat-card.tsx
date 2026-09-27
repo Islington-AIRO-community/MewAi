@@ -7,6 +7,8 @@ import { STAT_TONES, type DashboardStat } from '@/lib/types';
 import { cn, formatNumber } from '@/lib/utils';
 import { useCountUp, usePrefersReducedMotion } from '@/lib/hooks';
 import { DeltaChip } from './badges';
+import { Eyebrow } from '@/components/ui/primitives';
+import { useLocale } from '@/lib/i18n';
 
 /** Compact SVG sparkline — no chart library, no network payload. */
 function Sparkline({
@@ -81,10 +83,12 @@ export function StatCard({
   className?: string;
   index?: number;
 }) {
+  const { t, label } = useLocale();
   const tone = STAT_TONES[stat.tone];
   const animated = useCountUp(stat.value);
   const reduced = usePrefersReducedMotion();
   const Icon = stat.icon;
+  const statLabel = label('statLabel', stat.id, stat.label);
 
   const body = (
     <>
@@ -95,9 +99,9 @@ export function StatCard({
           >
             <Icon className="size-4.5" aria-hidden="true" />
           </span>
-          <p className="truncate text-xs font-bold uppercase tracking-[0.06em] text-navy-500">
-            {stat.label}
-          </p>
+          <Eyebrow className="truncate text-navy-500">
+            {label('statLabel', stat.id, stat.label)}
+          </Eyebrow>
         </div>
         <Sparkline
           data={stat.spark}
@@ -119,7 +123,7 @@ export function StatCard({
         </motion.span>
         <DeltaChip
           value={stat.delta}
-          label={stat.deltaLabel}
+          label={label('statDelta', stat.id, stat.deltaLabel)}
           invert={stat.id === 'review'}
         />
       </p>
@@ -137,45 +141,10 @@ export function StatCard({
       <Link href={stat.href} className={cn(shell, 'block')}>
         <span className="absolute inset-0" aria-hidden="true" />
         {body}
-        <span className="sr-only">View {stat.label.toLowerCase()}</span>
+        <span className="sr-only">{t('stat.view', { label: statLabel })}</span>
       </Link>
     );
   }
 
   return <div className={shell}>{body}</div>;
-}
-
-/**
- * Compact stat used in narrow rails. Label-first, value-second, so the
- * meaning survives truncation on small screens.
- */
-export function MiniStat({
-  label,
-  value,
-  hint,
-  tone = 'navy',
-  className,
-}: {
-  label: string;
-  value: string | number;
-  hint?: string;
-  tone?: keyof typeof STAT_TONES;
-  className?: string;
-}) {
-  const t = STAT_TONES[tone];
-  return (
-    <div
-      className={cn(
-        'rounded-xl border border-navy-200/80 bg-white p-3 shadow-xs',
-        className,
-      )}
-    >
-      <p className="flex items-center gap-1.5 truncate text-2xs font-bold uppercase tracking-[0.06em] text-navy-400">
-        <span className={cn('size-1.5 shrink-0 rounded-full', t.bar)} aria-hidden="true" />
-        {label}
-      </p>
-      <p className={cn('nums mt-1 text-xl font-extrabold leading-none', t.text)}>{value}</p>
-      {hint && <p className="mt-1 truncate text-2xs text-navy-400">{hint}</p>}
-    </div>
-  );
 }

@@ -4,28 +4,36 @@ import * as React from 'react';
 import { Activity, Radio, ShieldCheck, TriangleAlert, WifiOff } from 'lucide-react';
 import { SYSTEM_STATUS, type SystemMode } from '@/lib/types';
 import { cn } from '@/lib/utils';
+import { useLocale } from '@/lib/i18n';
 
-const MODES: Record<SystemMode, { label: string; icon: typeof Activity; chip: string; dot: string }> = {
+const MODES: Record<
+  SystemMode,
+  { label: string; labelKey: string; icon: typeof Activity; chip: string; dot: string }
+> = {
   operational: {
     label: 'System Operational',
+    labelKey: 'mode.operational',
     icon: ShieldCheck,
     chip: 'bg-relief-50 text-relief-700 ring-relief-200',
     dot: 'bg-relief-500',
   },
   relief: {
     label: 'Live Relief Mode',
+    labelKey: 'mode.relief',
     icon: Radio,
     chip: 'bg-navy-900 text-white ring-navy-900',
     dot: 'bg-relief-400',
   },
   degraded: {
     label: 'Partial Outage',
+    labelKey: 'mode.degraded',
     icon: TriangleAlert,
     chip: 'bg-alert-100 text-alert-800 ring-alert-300',
     dot: 'bg-alert-500',
   },
   offline: {
     label: 'Offline',
+    labelKey: 'mode.offline',
     icon: WifiOff,
     chip: 'bg-navy-100 text-navy-600 ring-navy-200',
     dot: 'bg-navy-400',
@@ -35,6 +43,9 @@ const MODES: Record<SystemMode, { label: string; icon: typeof Activity; chip: st
 /**
  * System status badge. The live region announces state changes only, so
  * screen-reader users are not interrupted by a static status.
+ *
+ * The mode name is translated at render rather than stored translated: the mode
+ * is a fact about the system, and its label is chrome.
  */
 export function EmergencyStatusBadge({
   mode = SYSTEM_STATUS.mode,
@@ -47,8 +58,10 @@ export function EmergencyStatusBadge({
   showDetail?: boolean;
   size?: 'sm' | 'md' | 'lg';
 }) {
+  const { t } = useLocale();
   const cfg = MODES[mode] ?? MODES.operational;
   const Icon = cfg.icon;
+  const label = t(cfg.labelKey);
 
   return (
     <div
@@ -84,7 +97,7 @@ export function EmergencyStatusBadge({
           size === 'sm' ? 'text-2xs' : size === 'lg' ? 'text-base' : 'text-xs',
         )}
       >
-        {cfg.label}
+        {label}
       </span>
 
       {showDetail && (
@@ -94,12 +107,8 @@ export function EmergencyStatusBadge({
       )}
 
       <span role="status" aria-live="polite" className="sr-only">
-        System status: {cfg.label}. {SYSTEM_STATUS.detail}
+        {t('status.announce', { label, detail: SYSTEM_STATUS.detail })}
       </span>
     </div>
   );
-}
-
-export function statusConfig(mode: SystemMode) {
-  return MODES[mode] ?? MODES.operational;
 }

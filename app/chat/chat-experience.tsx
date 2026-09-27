@@ -9,16 +9,25 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { useAiChatInstance } from '@/lib/ai-chat-context';
 import { CATEGORIES } from '@/lib/types';
+import { Kbd } from '@/components/ui/primitives';
+import { useLocale } from '@/lib/i18n';
 
-const QUICK_PHRASES = [
-  'People are trapped in a collapsed building',
-  'Someone cannot breathe and is not responding',
-  'We need shelter for a family of five',
-  'We have no clean drinking water',
-  'A child is missing near the canal',
-  'There is a downed power line across the road',
-  'Men with machetes are going through the houses on our street',
-];
+/**
+ * First-person sentences the reporter can tap instead of typing.
+ *
+ * These are speech, not chrome, so they follow the UI language: a Nepali
+ * speaker taps a Nepali sentence and that is what reaches Gemini. Translating
+ * them is therefore not cosmetic — it is the actual input.
+ */
+const QUICK_PHRASE_KEYS = [
+  'chat.quick.trapped',
+  'chat.quick.notBreathing',
+  'chat.quick.shelter',
+  'chat.quick.water',
+  'chat.quick.missingChild',
+  'chat.quick.powerLine',
+  'chat.quick.armed',
+] as const;
 
 export function ChatExperience() {
   const searchParams = useSearchParams();
@@ -27,29 +36,36 @@ export function ChatExperience() {
   // `AppShell`. A phrase tapped here and one tapped in the floating assistant
   // build the same ticket draft, because they are the same conversation.
   const ai = useAiChatInstance();
+  const { t, label } = useLocale();
   const [seeded, setSeeded] = React.useState(false);
 
   // Deep link: /chat?intent=medical records that the reporter came through the
   // medical tile. This used to call `ai.send()` with an invented first-person
   // sentence, which both displayed as something they had said and sent to Gemini
   // as something they had said.
+  //
+  // `label` is a dependency because the note quotes the category in the UI
+  // language; the `seeded` guard is what stops a language change from
+  // re-seeding the transcript.
   React.useEffect(() => {
     if (seeded || !intent) return;
     const cat = CATEGORIES[intent as keyof typeof CATEGORIES];
     if (!cat) return;
     setSeeded(true);
-    ai.noteIntent(`You arrived here through the "${cat.label}" category.`);
-  }, [intent, seeded, ai]);
+    ai.noteIntent(
+      t('chat.intentNote', { category: label('category', cat.id, cat.label) }),
+    );
+  }, [intent, seeded, ai, t, label]);
 
   return (
     <div className="flex min-h-[calc(100dvh-4.25rem)] flex-col">
       <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-12">
         {/* ---------- Assistant ---------- */}
         <section
-          aria-label="AI Relief Assistant"
+          aria-label={t('chat.ariaLabel')}
           className="flex min-h-[calc(100dvh-4.25rem)] flex-col border-navy-200 lg:col-span-8 lg:border-r"
         >
-          <h1 className="sr-only">AI Relief Assistant</h1>
+          <h1 className="sr-only">{t('chat.ariaLabel')}</h1>
           <ReliefAssistant variant="fullscreen" ai={ai} />
         </section>
 
@@ -58,23 +74,21 @@ export function ChatExperience() {
           <Card className="p-5">
             <h2 className="flex items-center gap-2 text-sm font-bold text-navy-900">
               <Sparkles className="size-4 text-dispatch-600" aria-hidden="true" />
-              Try one of these
+              {t('chat.tryThese')}
             </h2>
-            <p className="mt-1.5 text-xs leading-relaxed text-navy-500">
-              Tap a phrase to see what the assistant does with it.
-            </p>
+            <p className="mt-1.5 text-xs leading-relaxed text-navy-500">{t('chat.tryTheseHint')}</p>
 
             <ul className="mt-3.5 space-y-2">
-              {QUICK_PHRASES.map((p) => (
-                <li key={p}>
+              {QUICK_PHRASE_KEYS.map((key) => (
+                <li key={key}>
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => void ai.send(p)}
+                    onClick={() => void ai.send(t(key))}
                     disabled={ai.busy}
                     className="h-auto w-full justify-start whitespace-normal py-2.5 text-left text-xs font-semibold leading-snug"
                   >
-                    {p}
+                    {t(key)}
                   </Button>
                 </li>
               ))}
@@ -84,28 +98,18 @@ export function ChatExperience() {
           <Card className="p-5">
             <h2 className="flex items-center gap-2 text-sm font-bold text-navy-900">
               <ShieldCheck className="size-4 text-relief-600" aria-hidden="true" />
-              How this works
+              {t('chat.howItWorks')}
             </h2>
             <ol className="mt-3.5 space-y-3.5">
-              {[
-                {
-                  t: 'You describe the situation',
-                  d: 'In your own words, by voice or text. No forms, no jargon.',
-                },
-                {
-                  t: 'FLARE writes the details down',
-                  d: 'Name, phone number, where you are, what you need, how urgent.',
-                },
-                {
-                  t: 'You check it before it is sent',
-                  d: 'You read every field and correct anything wrong, then press “Submit ticket”.',
-                },
-                {
-                  t: 'You track it live',
-                  d: 'Follow the request from submitted to resolved, with every update logged.',
-                },
-              ].map((s, i) => (
-                <li key={s.t} className="flex gap-3">
+              {(
+                [
+                  ['chat.step.describe.t', 'chat.step.describe.d'],
+                  ['chat.step.notes.t', 'chat.step.notes.d'],
+                  ['chat.step.check.t', 'chat.step.check.d'],
+                  ['chat.step.track.t', 'chat.step.track.d'],
+                ] as const
+              ).map(([titleKey, bodyKey], i) => (
+                <li key={titleKey} className="flex gap-3">
                   <span
                     className="grid size-6 shrink-0 place-items-center rounded-full bg-navy-900 text-2xs font-black text-white"
                     aria-hidden="true"
@@ -113,8 +117,8 @@ export function ChatExperience() {
                     {i + 1}
                   </span>
                   <div className="min-w-0">
-                    <p className="text-xs font-bold text-navy-900">{s.t}</p>
-                    <p className="mt-0.5 text-xs leading-relaxed text-navy-500">{s.d}</p>
+                    <p className="text-xs font-bold text-navy-900">{t(titleKey)}</p>
+                    <p className="mt-0.5 text-xs leading-relaxed text-navy-500">{t(bodyKey)}</p>
                   </div>
                 </li>
               ))}
@@ -124,17 +128,18 @@ export function ChatExperience() {
           <Card className="border-alert-200 bg-alert-50/60 p-5">
             <h2 className="flex items-center gap-2 text-sm font-bold text-alert-800">
               <Zap className="size-4" aria-hidden="true" />
-              If life is in danger
+              {t('chat.danger.title')}
             </h2>
             <p className="mt-1.5 text-xs leading-relaxed text-alert-800/80">
-              Do not wait for a conversation. The red SOS button on every screen sends your live
-              location to the nearest crew in one tap.
+              {t('chat.danger.body')}
             </p>
             <div className="mt-3 flex items-center gap-2">
               <Badge tone="alertSolid" size="sm">
-                1 tap
+                {t('chat.danger.badge')}
               </Badge>
-              <span className="text-2xs font-semibold text-alert-800/70">No typing required</span>
+              <span className="text-2xs font-semibold text-alert-800/70">
+                {t('chat.danger.noTyping')}
+              </span>
             </div>
           </Card>
 
@@ -142,29 +147,21 @@ export function ChatExperience() {
             <p className="flex items-center gap-2 text-2xs text-navy-400">
               <Keyboard className="size-3.5" aria-hidden="true" />
               <span>
-                <Kbd>Enter</Kbd> to send · <Kbd>Shift</Kbd>+<Kbd>Enter</Kbd> for a new line
+                <Kbd>Enter</Kbd> {t('chat.keys.send')} · <Kbd>Shift</Kbd>+<Kbd>Enter</Kbd>{' '}
+                {t('chat.keys.newline')}
               </span>
             </p>
             <p className="flex items-center gap-2 text-2xs text-navy-400">
               <Mic className="size-3.5" aria-hidden="true" />
-              Voice mode talks to Google directly, so your audio never touches our
-              servers
+              {t('chat.keys.voice')}
             </p>
             <p className="flex items-center gap-2 text-2xs text-navy-400">
               <Info className="size-3.5" aria-hidden="true" />
-              This conversation is sent to our AI service to work out what you need
+              {t('chat.keys.privacy')}
             </p>
           </div>
         </aside>
       </div>
     </div>
-  );
-}
-
-function Kbd({ children }: { children: React.ReactNode }) {
-  return (
-    <kbd className="mx-0.5 inline-flex h-5 min-w-[20px] items-center justify-center rounded border border-navy-200 bg-white px-1 font-mono text-[10px] font-semibold text-navy-500">
-      {children}
-    </kbd>
   );
 }

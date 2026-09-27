@@ -21,10 +21,6 @@ export function usePrefersReducedMotion(): boolean {
   return useMediaQuery('(prefers-reduced-motion: reduce)');
 }
 
-export function useIsMobile(): boolean {
-  return useMediaQuery('(max-width: 767px)');
-}
-
 /**
  * Count-up animation for dashboard counters. Honours reduced-motion by
  * snapping straight to the final value, and never animates on the server.
@@ -52,37 +48,6 @@ export function useCountUp(target: number, duration = 900): number {
   }, [target, duration, reduced]);
 
   return value;
-}
-
-export function useLocalStorage<T>(key: string, initial: T) {
-  const [value, setValue] = React.useState<T>(initial);
-
-  React.useEffect(() => {
-    try {
-      const raw = window.localStorage.getItem(key);
-      if (raw !== null) setValue(JSON.parse(raw) as T);
-    } catch {
-      /* storage unavailable — keep initial */
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const set = React.useCallback(
-    (v: T | ((prev: T) => T)) => {
-      setValue((prev) => {
-        const next = typeof v === 'function' ? (v as (p: T) => T)(prev) : v;
-        try {
-          window.localStorage.setItem(key, JSON.stringify(next));
-        } catch {
-          /* ignore quota / privacy mode */
-        }
-        return next;
-      });
-    },
-    [key],
-  );
-
-  return [value, set] as const;
 }
 
 /** Close on Escape + outside pointer down, for popovers and menus. */

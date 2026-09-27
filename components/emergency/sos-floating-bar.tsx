@@ -7,6 +7,8 @@ import { MessageSquareText, PhoneCall } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { usePrefersReducedMotion } from '@/lib/hooks';
+import { Eyebrow } from '@/components/ui/primitives';
+import { useLocale } from '@/lib/i18n';
 
 /**
  * Persistent bottom-right quick-access bar.
@@ -27,6 +29,7 @@ export function SosFloatingBar({
   unreadCount?: number;
 }) {
   const reduced = usePrefersReducedMotion();
+  const { t } = useLocale();
   const [mounted, setMounted] = React.useState(false);
   const [scrolled, setScrolled] = React.useState(false);
 
@@ -71,7 +74,7 @@ export function SosFloatingBar({
                   variant="sos"
                   size="iconLg"
                   onClick={onOpenSos}
-                  srLabel="Emergency SOS — alert the nearest crew with your live location"
+                  srLabel={t('sos.sr.floating')}
                   className="stripe-critical"
                 >
                   <PhoneCall aria-hidden="true" />
@@ -89,12 +92,15 @@ export function SosFloatingBar({
             <div className="flex items-center gap-2">
               {unreadCount > 0 && (
                 <span className="rounded-full bg-navy-900 px-2.5 py-1 text-2xs font-bold text-white shadow-soft">
-                  {unreadCount} update{unreadCount === 1 ? '' : 's'}
+                  {t(unreadCount === 1 ? 'sos.updates' : 'sos.updatesPlural', { n: unreadCount })}
                 </span>
               )}
-              <span className="rounded-full bg-white/95 px-2.5 py-1 text-2xs font-bold uppercase tracking-[0.1em] text-emergency-700 shadow-soft ring-1 ring-emergency-200 backdrop-blur">
-                Emergency SOS
-              </span>
+              <Eyebrow
+                as="span"
+                className="rounded-full bg-white/95 px-2.5 py-1 shadow-soft ring-1 ring-emergency-200 backdrop-blur text-emergency-700"
+              >
+                {t('sos.button')}
+              </Eyebrow>
             </div>
           </motion.div>
         )}
@@ -115,12 +121,12 @@ export function SosFloatingBar({
             className="stripe-critical"
           >
             <PhoneCall aria-hidden="true" />
-            Emergency SOS
+            {t('sos.button')}
           </Button>
           <Button asChild variant="outline" size="lg" className="shrink-0">
-            <Link href="/chat" aria-label="Open AI Relief Assistant">
+            <Link href="/chat" aria-label={t('sos.askAssistant')}>
               <MessageSquareText aria-hidden="true" />
-              <span className="sr-only">Ask AI</span>
+              <span className="sr-only">{t('sos.askAssistantShort')}</span>
             </Link>
           </Button>
         </div>

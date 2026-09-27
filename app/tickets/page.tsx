@@ -14,11 +14,14 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { Label } from '@/components/ui/primitives';
+import { LoadingBlock, Notice, PageHeader, StateCard } from '@/components/ui/patterns';
+import { TextField } from '@/components/ui/inputs';
 import { TicketStatusBadge } from '@/components/assistant/ticket-status';
 import { SUPPORT_TYPE_LIST, type SupportType } from '@/lib/types';
 import { useClaimTicket, useMyTickets } from '@/lib/ticket-portal';
 import { formatDateTime } from '@/lib/time';
+import { intlLocale } from '@/lib/i18n-strings';
+import { useLocale } from '@/lib/i18n';
 
 /**
  * "My tickets" — the durable half of the intake.
@@ -36,39 +39,26 @@ import { formatDateTime } from '@/lib/time';
  */
 export default function TicketsPage() {
   const { data, error, loading, reload } = useMyTickets();
+  const { t } = useLocale();
 
   return (
-    <div className="pb-32 sm:pb-16">
-      <div className="border-b border-navy-200 bg-white">
-        <div className="container py-7 sm:py-9">
-          <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
-            <div>
-              <div className="flex items-center gap-2.5">
-                <span className="grid size-9 place-items-center rounded-xl bg-navy-100 text-navy-700">
-                  <FileText className="size-4.5" aria-hidden="true" />
-                </span>
-                <h1 className="text-2xl font-extrabold tracking-tight text-navy-900 sm:text-3xl">
-                  My tickets
-                </h1>
-              </div>
-              <p className="mt-2 max-w-2xl text-sm leading-relaxed text-navy-500">
-                Everything you have asked us for, and where it has got to. Open one to
-                check its status or add a message for the response team.
-              </p>
-            </div>
-
-            <Button asChild variant="primary" size="lg" className="self-start lg:self-auto">
-              <Link href="/chat">
-                <Mic aria-hidden="true" />
-                Raise a new ticket
-              </Link>
-            </Button>
-          </div>
-        </div>
-      </div>
+    <div className="pb-[var(--content-bottom)] sm:pb-16">
+      <PageHeader
+        icon={FileText}
+        title={t('tickets.title')}
+        description={t('tickets.subtitle')}
+        actions={
+          <Button asChild variant="primary" size="lg" className="self-start lg:self-auto">
+            <Link href="/chat">
+              <Mic aria-hidden="true" />
+              {t('tickets.newCta')}
+            </Link>
+          </Button>
+        }
+      />
 
       <div className="container py-6 sm:py-8">
-        {loading && <Loading />}
+        {loading && <LoadingBlock label={t('tickets.loading')} />}
         {!loading && error && <Failure error={error} onRetry={reload} />}
         {!loading && !error && data && data.length === 0 && <Empty onClaimed={reload} />}
         {!loading && !error && data && data.length > 0 && (
@@ -94,6 +84,7 @@ export default function TicketsPage() {
 }
 
 function TicketRow({ ticket }: { ticket: import('@/lib/ai-client').StoredTicket }) {
+  const { t, label, locale } = useLocale();
   return (
     <Card
       className="p-0 transition-shadow hover:shadow-card focus-within:shadow-card"
@@ -120,14 +111,16 @@ function TicketRow({ ticket }: { ticket: import('@/lib/ai-client').StoredTicket 
               {ticket.location}
             </span>
             <span aria-hidden="true">·</span>
-            <span>{supportLabel(ticket.support_needed)}</span>
+            <span>{supportLabel(ticket.support_needed, label)}</span>
             <span aria-hidden="true">·</span>
-            <span className="nums">{formatDateTime(ticket.created_at)}</span>
+            <span className="nums">
+              {formatDateTime(ticket.created_at, intlLocale(locale))}
+            </span>
           </p>
         </div>
 
         <Button asChild variant="outline" size="md" className="shrink-0 self-start sm:self-auto">
-          <Link href={`/tickets/${ticket.id}`}>Open</Link>
+          <Link href={`/tickets/${ticket.id}`}>{t('tickets.open')}</Link>
         </Button>
       </div>
     </Card>
@@ -135,31 +128,27 @@ function TicketRow({ ticket }: { ticket: import('@/lib/ai-client').StoredTicket 
 }
 
 function Empty({ onClaimed }: { onClaimed: () => void }) {
+  const { t } = useLocale();
   return (
     <div className="grid gap-5">
-      <Card className="p-8 text-center">
-        <span
-          className="mx-auto grid size-12 place-items-center rounded-2xl bg-navy-100 text-navy-500"
-          aria-hidden="true"
-        >
-          <FileText className="size-6" />
-        </span>
-        <h2 className="mt-4 text-base font-bold tracking-tight text-navy-900">
-          No tickets yet
-        </h2>
-        <p className="mx-auto mt-1.5 max-w-sm text-sm leading-relaxed text-navy-500">
-          Nothing is attached to this account. If you asked for help, it is saved
-          either way — the response team has your name, number and location.
+      <StateCard
+        icon={FileText}
+        title={t('tickets.empty')}
+        action={
+          <Button asChild variant="primary" size="lg">
+            <Link href="/chat">{t('tickets.emptyCta')}</Link>
+          </Button>
+        }
+      >
+        <p>{t('tickets.emptyBody')}</p>
+        <p className="mt-2">
+          {t('tickets.emptyClaimBefore')}{' '}
+          <em className="not-italic font-semibold text-navy-700">
+            {t('tickets.emptyClaimEmphasis')}
+          </em>{' '}
+          {t('tickets.emptyClaimAfter')}
         </p>
-        <p className="mx-auto mt-2 max-w-sm text-sm leading-relaxed text-navy-500">
-          A ticket you filed <em className="not-italic font-semibold text-navy-700">without
-          signing in</em> does not show up here on its own. Add it with the
-          reference we gave you and the phone number you gave us.
-        </p>
-        <Button asChild variant="primary" size="lg" className="mt-5">
-          <Link href="/chat">Ask for help</Link>
-        </Button>
-      </Card>
+      </StateCard>
       <ClaimForm onClaimed={onClaimed} />
     </div>
   );
@@ -178,10 +167,11 @@ function Empty({ onClaimed }: { onClaimed: () => void }) {
  * asked about it, and the empty state already points at it.
  */
 function ClaimForm({ onClaimed }: { onClaimed: () => void }) {
+  const { t } = useLocale();
   const [open, setOpen] = React.useState(false);
   const [ticketId, setTicketId] = React.useState('');
   const [phone, setPhone] = React.useState('');
-  const { claiming, error, clearError, claim } = useClaimTicket(onClaimed);
+  const { claiming, errorKey, clearError, claim } = useClaimTicket(onClaimed);
 
   async function onSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -204,7 +194,7 @@ function ClaimForm({ onClaimed }: { onClaimed: () => void }) {
         className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-navy-300 bg-navy-50/60 px-4 py-3.5 text-sm font-semibold text-navy-600 no-tap-highlight transition-colors hover:border-navy-400 hover:bg-navy-50"
       >
         <KeyRound className="size-4 shrink-0" aria-hidden="true" />
-        I filed this while signed out
+        {t('claim.collapsed')}
         <ChevronDown className="size-4 shrink-0" aria-hidden="true" />
       </button>
     );
@@ -213,58 +203,45 @@ function ClaimForm({ onClaimed }: { onClaimed: () => void }) {
   return (
     <Card className="p-5 sm:p-6">
       <h2 className="text-base font-bold tracking-tight text-navy-900">
-        Add a ticket you filed without signing in
+        {t('claim.title')}
       </h2>
       <p className="mt-1.5 text-sm leading-relaxed text-navy-500">
-        Your ticket was saved and the response team has it. To follow it here,
-        give us the reference from your receipt and the phone number you gave us.
+        {t('claim.body')}
       </p>
 
       <form onSubmit={onSubmit} className="mt-4 grid gap-4">
         <div className="grid gap-4 sm:grid-cols-2">
-          <div>
-            <Label htmlFor="claim-ticket-id">Ticket reference</Label>
-            <input
-              id="claim-ticket-id"
-              value={ticketId}
-              onChange={(e) => {
-                setTicketId(e.target.value);
-                if (error) clearError();
-              }}
-              placeholder="TKT-000001"
-              autoComplete="off"
-              spellCheck={false}
-              /* 16px minimum: anything smaller makes iOS zoom the viewport on
-                 focus, which loses the reference mid-typing. */
-              className="mt-1.5 h-11 w-full rounded-lg border border-navy-200 bg-white px-3 text-base text-navy-900 placeholder:text-navy-400 focus-visible:border-dispatch-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dispatch-600/30"
-            />
-          </div>
-          <div>
-            <Label htmlFor="claim-phone">Phone number you gave us</Label>
-            <input
-              id="claim-phone"
-              type="tel"
-              inputMode="tel"
-              value={phone}
-              onChange={(e) => {
-                setPhone(e.target.value);
-                if (error) clearError();
-              }}
-              placeholder="07700 900123"
-              autoComplete="tel"
-              className="mt-1.5 h-11 w-full rounded-lg border border-navy-200 bg-white px-3 text-base text-navy-900 placeholder:text-navy-400 focus-visible:border-dispatch-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dispatch-600/30"
-            />
-          </div>
+          <TextField
+            id="claim-ticket-id"
+            label={t('claim.reference')}
+            value={ticketId}
+            onChange={(e) => {
+              setTicketId(e.target.value);
+              if (errorKey) clearError();
+            }}
+            placeholder="TKT-000001"
+            autoComplete="off"
+            spellCheck={false}
+          />
+          <TextField
+            id="claim-phone"
+            type="tel"
+            inputMode="tel"
+            label={t('claim.phone')}
+            value={phone}
+            onChange={(e) => {
+              setPhone(e.target.value);
+              if (errorKey) clearError();
+            }}
+            placeholder="07700 900123"
+            autoComplete="tel"
+          />
         </div>
 
-        {error && (
-          <p
-            role="alert"
-            className="flex items-start gap-2 rounded-lg bg-alert-50 px-3 py-2.5 text-sm leading-relaxed text-alert-700 ring-1 ring-inset ring-alert-200"
-          >
-            <AlertCircle className="mt-px size-4 shrink-0" aria-hidden="true" />
-            {error}
-          </p>
+        {errorKey && (
+          <Notice tone="caution" icon={AlertCircle} role="alert">
+            {t(errorKey)}
+          </Notice>
         )}
 
         <div className="flex flex-wrap items-center gap-2.5">
@@ -277,10 +254,10 @@ function ClaimForm({ onClaimed }: { onClaimed: () => void }) {
             {claiming ? (
               <>
                 <Loader2 className="animate-spin" aria-hidden="true" />
-                Checking
+                {t('claim.checking')}
               </>
             ) : (
-              'Add this ticket'
+              t('claim.submit')
             )}
           </Button>
           <Button
@@ -292,15 +269,11 @@ function ClaimForm({ onClaimed }: { onClaimed: () => void }) {
               clearError();
             }}
           >
-            Cancel
+            {t('claim.cancel')}
           </Button>
         </div>
 
-        <p className="text-2xs leading-relaxed text-navy-500">
-          Both details must match the ticket exactly. If the ticket has already
-          been added to an account, it can only be used from that account — there
-          is no way to move it, so nobody else can take it from you.
-        </p>
+        <p className="text-2xs leading-relaxed text-navy-500">{t('claim.footnote')}</p>
       </form>
     </Card>
   );
@@ -313,51 +286,39 @@ function Failure({
   error: NonNullable<ReturnType<typeof useMyTickets>['error']>;
   onRetry: () => void;
 }) {
+  const { t } = useLocale();
+  const signedOut = error.kind === 'not_signed_in';
   return (
-    <Card className="p-8 text-center">
-      <span
-        className="mx-auto grid size-12 place-items-center rounded-2xl bg-alert-50 text-alert-600 ring-1 ring-inset ring-alert-200"
-        aria-hidden="true"
-      >
-        <AlertCircle className="size-6" />
-      </span>
-      <h2 className="mt-4 text-base font-bold tracking-tight text-navy-900">
-        {error.kind === 'not_signed_in' ? 'Sign in to see your tickets' : 'Cannot load your tickets'}
-      </h2>
-      <p className="mx-auto mt-1.5 max-w-sm text-sm leading-relaxed text-navy-500">
-        {error.kind === 'not_signed_in'
-          ? 'Tickets are tied to the account you were signed in with when you filed them.'
-          : 'Nothing was lost. Try again in a moment.'}
-      </p>
-      {error.kind === 'not_signed_in' ? (
-        <Button asChild variant="primary" size="lg" className="mt-5">
-          <Link href="/login?callbackUrl=/tickets">Sign in</Link>
-        </Button>
-      ) : (
-        <Button variant="outline" size="lg" className="mt-5" onClick={onRetry}>
-          <RefreshCw aria-hidden="true" />
-          Try again
-        </Button>
-      )}
-    </Card>
-  );
-}
-
-function Loading() {
-  return (
-    <div
-      className="flex items-center justify-center gap-2 py-16 text-sm text-navy-500"
-      role="status"
-      aria-live="polite"
+    <StateCard
+      icon={AlertCircle}
+      tone="alert"
+      title={t(signedOut ? 'tickets.failure.signedIn.title' : 'tickets.failure.title')}
+      action={
+        signedOut ? (
+          <Button asChild variant="primary" size="lg">
+            <Link href="/login?callbackUrl=/tickets">{t('account.signIn')}</Link>
+          </Button>
+        ) : (
+          <Button variant="outline" size="lg" onClick={onRetry}>
+            <RefreshCw aria-hidden="true" />
+            {t('tickets.failure.retry')}
+          </Button>
+        )
+      }
     >
-      <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-      Loading your tickets…
-    </div>
+      {t(signedOut ? 'tickets.failure.signedIn.body' : 'tickets.failure.body')}
+    </StateCard>
   );
 }
 
-function supportLabel(types: SupportType[]): string {
+function supportLabel(
+  types: SupportType[],
+  label: (table: import('@/lib/i18n-strings').Table, id: string, english: string) => string,
+): string {
   return types
-    .map((t) => SUPPORT_TYPE_LIST.find((s) => s.id === t)?.shortLabel ?? t)
+    .map((type) => {
+      const meta = SUPPORT_TYPE_LIST.find((s) => s.id === type);
+      return meta ? label('support', meta.id, meta.shortLabel) : type;
+    })
     .join(', ');
 }

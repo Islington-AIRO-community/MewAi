@@ -400,6 +400,89 @@ relief-supplies`). `security` was added along with the `dept-security`
 department; both are new, and `CATEGORY_ICONS` in `app/dashboard/page.tsx` is a
 separate hand-maintained map that also needed the entry.
 
+## Language: a curated layer, and a model layer
+
+Two mechanisms, one control. `lib/i18n.tsx` + `lib/i18n-strings.ts` are the
+curated layer; `lib/browser-translate.ts` is the model layer. Neither is
+sufficient alone, and the button in the language menu owns both.
+
+**Layer 1, curated.** `EN`/`NE` hold sentences in both languages, `NE_TABLES`
+holds only the Nepali override for taxonomy labels whose English already lives on
+the object in `lib/types.ts`. `NE` is *partial on purpose* and the switcher
+computes and states the real coverage rather than implying completeness. The first
+render is always English — the routes are prerendered, so the stored choice is
+applied in an effect. See the header of `i18n.tsx` for why there is no `/ne/…`
+prefix.
+
+**Layer 2, on-device model.** `window.Translator` (Chrome 138+), reached through
+`useBrowserTranslate`. It exists because the tables deliberately leave
+long-form prose in English, and this is the only version of translating it that
+is defensible next to a reporter's address: no server, no key, no page text
+leaving the device.
+
+Four things about it that are easy to get wrong:
+
+1. **Curated wins, always.** `curatedLookup` is consulted before the model for
+   every string. Those labels were written to a length budget and `Button` is
+   `whitespace-nowrap`, so a model's over-long replacement is a layout bug.
+2. **"No exact translation" is enforced by the caller, not asked for.** A neural
+   model never says "I don't know" — it answers everything confidently. So
+   `isAcceptable` is a veto list (empty, echo, no Devanagari in, a digit lost or
+   invented, output collapsed) and the default is to leave the text alone.
+   English beats a wrong phone number, every time, and the check deliberately
+   over-rejects.
+3. **`data-no-translate` marks the record and the PII.** Never let a model rewrite
+   what was said or who it was said by: the admin queue, ticket facts, the
+   reporter/address blocks, and every transcript and message thread. `A` and
+   `BUTTON` are excluded structurally, and SVG is excluded by *namespace* — a tag
+   list misses `<text>`, which is where a map label actually lives.
+4. **No re-run on navigation.** A `MutationObserver` re-applies after React
+   re-renders, so client-side navigation needs no route-change effect, no English
+   flash, and no rebuilding the model per link click.
+
+Two shapes in `curatedLookup` and a bug that hides in both, because a broken
+template lookup is silent — the model path still works, so the page just quietly
+stops being the reviewed translation:
+
+- No-placeholder strings go in an exact map, keyed by `normKey` (normalised,
+  lowercased). `{n}` templates go in a *shape* map.
+- The shape key has to collapse the **placeholder** as well as digits:
+  `shapeKey('You have {n} open requests')` must be `'you have # open requests'`,
+  or no rendered string can ever match it.
+- Every whitespace run in the matcher becomes `\s+`, **including the ones
+  touching a placeholder**. Escaping literal runs and dropping their outer spaces
+  yields `have(\S+)open`, which matches nothing at all.
+- Collapsing both to `#` is safe because the shape map is only a candidate
+  filter: `interpolateFromRendered` re-checks against a regex built from the real
+  template and returns `null` when unsure.
+
+**The session belongs to `LanguageSwitcher`, not the panel.** The panel renders
+inside the menu, which unmounts when it closes, and the hook destroys the model on
+unmount — a control that owned its own hook would restore the whole page to
+English the moment somebody clicked away. `TranslateControl` takes `translate` as
+a required prop for the same reason `ReliefAssistant` takes `ai`.
+
+**Every unavailable state is a sentence.** No `window.Translator`, no en→ne
+model, a refused model — each renders which one, and each says the curated
+translation still works. A browser can expose the whole API and still ship no
+en→ne model, so `availability()` is probed after mount (never during render). The
+button is `aria-busy` while running, and "left in English" is reported as a count
+rather than hidden. A `failed` state must offer retry: the session lives in the
+switcher, so nothing else resets it, and a sentence with no way forward is a dead
+end.
+
+**The visible section is the live region** — `role="status"` on the panel, not an
+`sr-only` second copy of it. An earlier draft drew every state twice, once for
+eyes and once for screen readers, and two copies of one thing is two things to
+keep in step; it had already shipped a mismatch where the hidden copy announced
+the "no model installed" body beside the "this browser cannot translate" title.
+Don't add a parallel announcement layer.
+
+`lib/translator.d.ts` holds the ambient `window.Translator` types, separate from
+the code for the same reason as `lib/next-auth.d.ts`. The engine is reached
+through a dynamic `import()`, so a browser that cannot translate never downloads
+it, and First Load JS does not move.
+
 ## Time is frozen — this causes hydration bugs
 
 `lib/time.ts` exports `DEMO_NOW = 2026-09-26T06:00:00Z`. Every human-facing time
@@ -561,5 +644,8 @@ No images, icon fonts, chart libraries, or map tiles anywhere — avatars are in
 SVG data URIs, the "map" is pure CSS/SVG, sparklines are inline SVG, the Google
 mark is inline SVG. `lucide-react` and `framer-motion` are in
 `next.config.js → experimental.optimizePackageImports`, so only used icons and
-motion primitives bundle. Shared First Load JS is 87.3 kB. Keep it that way; a
-real image or chart dependency is a visible regression.
+motion primitives bundle. Shared First Load JS is 87.4 kB — up 0.1 kB from the
+language control, which is a feature, not a dependency. Keep it that way; a real
+image or chart dependency is a visible regression. Anything model-sized must
+arrive through a dynamic `import()`, the way `lib/browser-translate.ts` does, so
+it is fetched on demand and never counted here.

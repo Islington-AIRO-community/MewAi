@@ -225,22 +225,17 @@ export function fetchAdminTranscript(id: string): Promise<PortalResult<TicketTra
   return request(`/api/ai/admin/tickets/${encodeURIComponent(id)}/transcript`);
 }
 
-/** Human wording for a failure, used where the UI has to say it inline. */
-export function describePortalError(error: PortalError): string {
-  switch (error.kind) {
-    case 'not_signed_in':
-      return 'You need to sign in to see this.';
-    case 'forbidden':
-      return 'Your account is not allowed to do that.';
-    case 'not_found':
-      return 'No such ticket on your account.';
-    case 'unreachable':
-      return 'The relief service could not be reached.';
-    case 'unavailable':
-      return 'The ticket service is temporarily down. Nothing was lost — try again in a moment.';
-    default:
-      return 'Something went wrong on our side. Your details are still here.';
-  }
+/**
+ * A translation **key** for a failure, not a sentence.
+ *
+ * Every consumer of this is a UI that has to say the failure out loud, and every
+ * one of them is a client component with a `useLocale()` in reach. Handing back
+ * a finished English string would make "the file with the English in it" the one
+ * thing in this module that cannot be translated, and a Nepali reporter would
+ * read a translated screen with one English error stuck in the middle of it.
+ */
+export function portalErrorKey(error: PortalError): string {
+  return `portalError.${error.kind}`;
 }
 
 /* ------------------------------------------------------------------ *
@@ -295,7 +290,7 @@ export function useMyTickets(): AsyncState<StoredTicket[]> & { reload: () => voi
  * Submit a claim for a ticket that was filed without an account.
  *
  * Kept separate from `useMyTickets` rather than folded into it, because the
- * failure copy differs: `describePortalError` says "no such ticket on your
+ * failure copy differs: `portalErrorKey` resolves to "no such ticket on your
  * account", which is actively wrong here — the ticket is not on anyone's account
  * yet, that is the whole problem. The claim form therefore renders the message
  * the proxy sends, not the generic one.
@@ -305,12 +300,13 @@ export function useMyTickets(): AsyncState<StoredTicket[]> & { reload: () => voi
  */
 export function useClaimTicket(onClaimed?: () => void): {
   claiming: boolean;
-  error: string | null;
+  /** A translation key, for the same reason as `portalErrorKey`. */
+  errorKey: string | null;
   clearError: () => void;
   claim: (ticketId: string, reporterPhone: string) => Promise<boolean>;
 } {
   const [claiming, setClaiming] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
+  const [errorKey, setErrorKey] = React.useState<string | null>(null);
   // Held in a ref so a caller re-rendering mid-request cannot swap the callback
   // out from under an in-flight claim.
   const onClaimedRef = React.useRef(onClaimed);
@@ -318,7 +314,7 @@ export function useClaimTicket(onClaimed?: () => void): {
 
   const claim = React.useCallback(async (ticketId: string, reporterPhone: string) => {
     setClaiming(true);
-    setError(null);
+    setErrorKey(null);
     const result = await claimTicket(ticketId, reporterPhone);
     setClaiming(false);
     if (result.ok) {
@@ -326,19 +322,19 @@ export function useClaimTicket(onClaimed?: () => void): {
       return true;
     }
     // A 404 here is the expected answer for a mistyped reference, and it is
-    // deliberately the same message for a wrong phone. Everything else falls
+    // deliberately the same key for a wrong phone. Everything else falls
     // back to the shared wording.
-    setError(
+    setErrorKey(
       result.error.kind === 'not_found'
-        ? 'That reference and phone number do not match a ticket. Check both and try again.'
-        : describePortalError(result.error),
+        ? 'portalError.claimMismatch'
+        : portalErrorKey(result.error),
     );
     return false;
   }, []);
 
-  const clearError = React.useCallback(() => setError(null), []);
+  const clearError = React.useCallback(() => setErrorKey(null), []);
 
-  return { claiming, error, clearError, claim };
+  return { claiming, errorKey, clearError, claim };
 }
 
 /**
@@ -399,7 +395,8 @@ export function useTicketTranscript(id: string): AsyncState<TranscriptTurn[]> & 
  */
 export interface PortalMessage extends TicketMessage {
   pending?: boolean;
-  failed?: string;
+  /** A translation key, from `portalErrorKey`. */
+  failedKey?: string;
   /**
    * A live safety flag on this turn, rendered above the reply.
    *
@@ -428,7 +425,7 @@ function localMessage(
   ticketId: string,
   role: 'user' | 'assistant',
   text: string,
-  extra?: Pick<PortalMessage, 'pending' | 'failed' | 'safetyNote'>,
+  extra?: Pick<PortalMessage, 'pending' | 'failedKey' | 'safetyNote'>,
 ): PortalMessage {
   localSeq -= 1;
   return {
@@ -502,7 +499,7 @@ export function useTicketConversation(id: string): TicketConversation {
         setMessages((prev) =>
           prev.map((m) =>
             m.id === optimistic.id
-              ? { ...m, pending: false, failed: describePortalError(result.error) }
+              ? { ...m, pending: false, failedKey: portalErrorKey(result.error) }
               : m,
           ),
         );

@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import Link from 'next/link';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { signIn, useSession } from 'next-auth/react';
 import {
   ArrowRight,
@@ -12,15 +12,15 @@ import {
   Fingerprint,
   PhoneCall,
   ShieldCheck,
-  Sparkles,
   UserRound,
 } from 'lucide-react';
 import { Logo } from '@/components/layout/logo';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { EmergencyStatusBadge } from '@/components/emergency/emergency-status-badge';
 import { SYSTEM_STATUS } from '@/lib/types';
 import { useApp } from '@/lib/store';
+import { Eyebrow } from '@/components/ui/primitives';
+import { useLocale } from '@/lib/i18n';
 
 /** Inline Google "G" mark — no external image request. */
 function GoogleMark({ className }: { className?: string }) {
@@ -47,10 +47,17 @@ function GoogleMark({ className }: { className?: string }) {
 }
 
 const TRUST = [
-  { icon: ShieldCheck, label: 'No password to forget in an emergency' },
-  { icon: Fingerprint, label: 'Identity verified, never shared with responders' },
-  { icon: Eye, label: 'Location shared only when you send a request' },
-];
+  { icon: ShieldCheck, key: 'login.trust.password' },
+  { icon: Fingerprint, key: 'login.trust.identity' },
+  { icon: Eye, key: 'login.trust.location' },
+] as const;
+
+/** The three numbers under the pitch. `value` is already formatted, not a key. */
+const METRICS = [
+  { key: 'login.metric.responders', value: SYSTEM_STATUS.activeResponders },
+  { key: 'login.metric.incidents', value: SYSTEM_STATUS.openIncidents },
+  { key: 'login.metric.median', value: '9 min' },
+] as const;
 
 /** Signed-out visitors land on the dashboard unless turned away from a page. */
 const DEFAULT_DESTINATION = '/dashboard';
@@ -58,6 +65,7 @@ const DEFAULT_DESTINATION = '/dashboard';
 export default function LoginPage() {
   const router = useRouter();
   const { status } = useSession();
+  const { t } = useLocale();
   // The SOS control below raises the shell dialog instead of navigating, so it
   // needs the store. Reading it here rather than in the header is the point:
   // someone who cannot or will not sign in still has to be one tap from an
@@ -142,53 +150,44 @@ export default function LoginPage() {
             <Logo tone="light" />
           </Link>
 
-          <div className="mt-8 flex flex-wrap items-center gap-2.5">
+          <div className="mt-8">
             <EmergencyStatusBadge size="sm" />
-            <Badge tone="glass" size="sm">
-              <Sparkles className="size-3" aria-hidden="true" />
-              Live Relief Mode
-            </Badge>
           </div>
 
           <h1 className="mt-6 text-balance text-4xl font-extrabold leading-[1.08] tracking-tight text-white sm:text-5xl lg:text-[3.4rem]">
-            Get help in the
+            {t('login.h1.before')}{' '}
             <span className="relative mx-2 inline-block">
-              <span className="relative z-10">three taps</span>
+              <span className="relative z-10">{t('login.h1.emphasis')}</span>
               <span
                 className="absolute inset-x-0 bottom-1 z-0 h-3 rounded-sm bg-emergency-500/40"
                 aria-hidden="true"
               />
-            </span>
-            it takes to open this screen.
+            </span>{' '}
+            {t('login.h1.after')}
           </h1>
 
           <p className="mt-5 max-w-lg text-pretty text-base leading-relaxed text-white/70 sm:text-lg">
-            FLARE listens by voice or text, routes your request to the right response team, and
-            keeps you and your responders on the same page — every step, in real time.
+            {t('login.pitch')}
           </p>
 
           <ul className="mt-8 space-y-3">
-            {TRUST.map(({ icon: Icon, label }) => (
-              <li key={label} className="flex items-start gap-3 text-sm text-white/80">
+            {TRUST.map(({ icon: Icon, key }) => (
+              <li key={key} className="flex items-start gap-3 text-sm text-white/80">
                 <span className="mt-0.5 grid size-5 shrink-0 place-items-center rounded-full bg-relief-500/20 text-relief-300">
                   <Icon className="size-3" aria-hidden="true" />
                 </span>
-                {label}
+                {t(key)}
               </li>
             ))}
           </ul>
 
           {/* Live metrics strip */}
           <dl className="mt-10 grid grid-cols-3 gap-4 border-t border-white/10 pt-6">
-            {[
-              { label: 'Responders active', value: SYSTEM_STATUS.activeResponders },
-              { label: 'Open incidents', value: SYSTEM_STATUS.openIncidents },
-              { label: 'Median response', value: '9 min' },
-            ].map((s) => (
-              <div key={s.label}>
-                <dt className="text-2xs font-bold uppercase tracking-[0.1em] text-white/40">
-                  {s.label}
-                </dt>
+            {METRICS.map((s) => (
+              <div key={s.key}>
+                <Eyebrow as="dt" className="text-white/40">
+                  {t(s.key)}
+                </Eyebrow>
                 <dd className="nums mt-1 text-2xl font-extrabold text-white">{s.value}</dd>
               </div>
             ))}
@@ -200,11 +199,10 @@ export default function LoginPage() {
           <div className="overflow-hidden rounded-3xl border border-white/10 bg-white shadow-lift">
             <div className="px-6 pb-6 pt-7 sm:px-8 sm:pb-8 sm:pt-8">
               <h2 className="text-xl font-extrabold tracking-tight text-navy-900">
-                Sign in to FLARE
+                {t('login.card.title')}
               </h2>
               <p className="mt-1.5 text-sm leading-relaxed text-navy-500">
-                Signing in lets responders reach you and keeps your report history in one place.
-                You can send an SOS without signing in.
+                {t('login.card.body')}
               </p>
 
               <Button
@@ -217,12 +215,11 @@ export default function LoginPage() {
                 variant="outline"
               >
                 <GoogleMark className="size-5 shrink-0" />
-                Continue with Google
+                {t('login.card.google')}
               </Button>
 
               <p className="mt-3.5 text-center text-xs leading-relaxed text-navy-400">
-                Google verifies your email. FLARE never sees your password, and does not share
-                your identity with response teams.
+                {t('login.card.privacy')}
               </p>
             </div>
 
@@ -234,10 +231,10 @@ export default function LoginPage() {
                 </span>
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-bold text-emergency-800">
-                    Need help right now?
+                    {t('login.escape.title')}
                   </p>
                   <p className="mt-0.5 text-xs leading-relaxed text-emergency-700">
-                    Send an SOS without signing in. Your location goes straight to the nearest crew.
+                    {t('login.escape.body')}
                   </p>
                 </div>
               </div>
@@ -256,7 +253,7 @@ export default function LoginPage() {
                 onClick={openSos}
               >
                 <PhoneCall aria-hidden="true" />
-                Send emergency SOS
+                {t('login.escape.cta')}
                 <ArrowRight className="size-4" aria-hidden="true" />
               </Button>
             </div>
@@ -265,13 +262,13 @@ export default function LoginPage() {
           {/* Assurances */}
           <ul className="mt-5 space-y-2 px-1">
             {[
-              { icon: Brain, text: 'AI drafts the request — a human always confirms before dispatch' },
-              { icon: CheckCircle2, text: 'WCAG 2.2 AA: keyboard, screen reader and reduced-motion ready' },
-              { icon: UserRound, text: 'Works on low-bandwidth connections and older phones' },
-            ].map(({ icon: Icon, text }) => (
-              <li key={text} className="flex items-start gap-2.5 text-xs text-white/50">
+              { icon: Brain, key: 'login.assure.draft' },
+              { icon: CheckCircle2, key: 'login.assure.a11y' },
+              { icon: UserRound, key: 'login.assure.bandwidth' },
+            ].map(({ icon: Icon, key }) => (
+              <li key={key} className="flex items-start gap-2.5 text-xs text-white/50">
                 <Icon className="mt-0.5 size-3.5 shrink-0 text-white/40" aria-hidden="true" />
-                {text}
+                {t(key)}
               </li>
             ))}
           </ul>

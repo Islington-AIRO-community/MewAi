@@ -53,12 +53,19 @@ export const SITUATION_LABEL: Record<SituationId, string> = {
   rescue: 'Need rescue',
 };
 
-/** Shown in the dialog while filing, so the reporter can see what is being sent. */
-export const SITUATION_SUPPORT_LABEL: Record<SituationId, string> = {
-  medical: 'medical help',
-  danger: 'security help',
-  fire: 'rescue',
-  rescue: 'rescue',
+/**
+ * Shown in the dialog while filing, so the reporter can see what is being sent.
+ *
+ * Keys, not copy: this string is for the reader. `SITUATION_LABEL` above is the
+ * opposite case — it goes into the ticket row, so it stays English and stays in
+ * the payload, because an operator's queue and a model's prompt are not part of
+ * the reader's language choice.
+ */
+export const SITUATION_SUPPORT_LABEL_KEY: Record<SituationId, string> = {
+  medical: 'sos.support.medical',
+  danger: 'sos.support.security',
+  fire: 'sos.support.rescue',
+  rescue: 'sos.support.rescue',
 };
 
 export interface SosPosition {
@@ -71,17 +78,17 @@ export interface SosPosition {
 export type FixState =
   | { kind: 'locating' }
   | { kind: 'ready'; position: SosPosition }
-  | { kind: 'denied'; message: string }
-  | { kind: 'unsupported'; message: string };
+  | { kind: 'denied'; messageKey: string }
+  | { kind: 'unsupported'; messageKey: string };
 
 /**
  * A location that will still be filed when the device cannot produce one.
  *
  * `location` is `min_length=1` and the ticket must be filed, so the fallback is
  * text rather than a refusal — but it is text that says the truth. A responder
- * reading "Location unavailable" knows to phone the reporter; one reading
- * "40.7581, -74.0013" would drive a crew to the middle of Manhattan, which is
- * what the old hardcoded value did on every device on earth.
+ * reading "Location unavailable" knows to phone the reporter; one reading a
+ * hardcoded coordinate would drive a crew to the wrong city, which is what the
+ * old fixed value did on every device on earth.
  */
 export const NO_FIX = 'Location unavailable — this device did not share a position';
 
@@ -102,7 +109,7 @@ export function locate(): Promise<FixState> {
     if (typeof navigator === 'undefined' || !navigator.geolocation) {
       resolve({
         kind: 'unsupported',
-        message: 'This browser cannot share a location. Your phone number is what we will use.',
+        messageKey: 'sos.fix.unsupported',
       });
       return;
     }
@@ -117,7 +124,7 @@ export function locate(): Promise<FixState> {
     const timer = window.setTimeout(() => {
       finish({
         kind: 'denied',
-        message: 'The location request timed out. Your phone number is what we will use.',
+        messageKey: 'sos.fix.timeout',
       });
     }, GEOLOCATION_TIMEOUT_MS);
 
@@ -138,10 +145,10 @@ export function locate(): Promise<FixState> {
         window.clearTimeout(timer);
         finish({
           kind: 'denied',
-          message:
+          messageKey:
             err.code === err.PERMISSION_DENIED
-              ? 'Location access is off. Your phone number is what we will use.'
-              : 'Could not get a location fix. Your phone number is what we will use.',
+              ? 'sos.fix.permissionOff'
+              : 'sos.fix.unavailable',
         });
       },
       { enableHighAccuracy: true, maximumAge: 0, timeout: GEOLOCATION_TIMEOUT_MS },

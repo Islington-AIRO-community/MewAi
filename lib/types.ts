@@ -316,6 +316,18 @@ export const STAGE_IDS: StageId[] = STAGES.map((s) => s.id);
  * Departments (routing targets surfaced by the AI assistant)
  * ------------------------------------------------------------------ */
 
+/**
+ * `phone` is the desk's **national dispatch short code** — the same number
+ * that appears under `/resources` → Emergency numbers, not a per-desk
+ * extension. Real, dialable, and free: a fictional `+1 (555)` number on a
+ * card that says "call your response team" is the one piece of mock data
+ * that could actually hurt somebody. The full directory lives in
+ * `emergency-contacts.ts`; this is the one line per team.
+ *
+ * The six departments and their icons match the six groups in
+ * `EMERGENCY_GROUPS` one-for-one, so the routing taxonomy and the numbers a
+ * person can dial by hand are the same six.
+ */
 export type DepartmentStatus = 'available' | 'strained' | 'overloaded' | 'offline';
 
 export interface Department {
@@ -344,8 +356,8 @@ export const DEPARTMENTS: Department[] = [
     crewsAvailable: 3,
     crewsTotal: 9,
     avgResponseMinutes: 11,
-    phone: '+1 (555) 011-4410',
-    coverage: 'Northbank, Eastvale, Ridgeway',
+    phone: '102',
+    coverage: 'Nationwide ambulance, 24 h',
     color: 'emergency',
   },
   {
@@ -358,8 +370,8 @@ export const DEPARTMENTS: Department[] = [
     crewsAvailable: 6,
     crewsTotal: 8,
     avgResponseMinutes: 8,
-    phone: '+1 (555) 011-7732',
-    coverage: 'City-wide',
+    phone: '1191',
+    coverage: 'Kathmandu Valley, Kaski, Chitwan',
     color: 'dispatch',
   },
   {
@@ -372,8 +384,8 @@ export const DEPARTMENTS: Department[] = [
     crewsAvailable: 11,
     crewsTotal: 14,
     avgResponseMinutes: 22,
-    phone: '+1 (555) 011-2290',
-    coverage: 'Northbank, Hillcrest, Old Mill',
+    phone: '1234',
+    coverage: 'Kathmandu, Lalitpur, Bhaktapur',
     color: 'relief',
   },
   {
@@ -386,8 +398,8 @@ export const DEPARTMENTS: Department[] = [
     crewsAvailable: 8,
     crewsTotal: 10,
     avgResponseMinutes: 34,
-    phone: '+1 (555) 011-8865',
-    coverage: 'All districts',
+    phone: '1112',
+    coverage: 'All 77 districts',
     color: 'alert',
   },
   {
@@ -400,8 +412,8 @@ export const DEPARTMENTS: Department[] = [
     crewsAvailable: 1,
     crewsTotal: 7,
     avgResponseMinutes: 26,
-    phone: '+1 (555) 011-0919',
-    coverage: 'Eastvale industrial belt',
+    phone: '101',
+    coverage: 'Valley municipalities, industrial belt',
     color: 'emergency',
   },
   {
@@ -414,8 +426,8 @@ export const DEPARTMENTS: Department[] = [
     crewsAvailable: 4,
     crewsTotal: 6,
     avgResponseMinutes: 14,
-    phone: '+1 (555) 011-3308',
-    coverage: 'City-wide',
+    phone: '100',
+    coverage: 'Nationwide',
     color: 'navy',
   },
 ];
@@ -545,23 +557,11 @@ export interface Report {
   etaMinutes?: number;
 }
 
-export const PRIORITY_ORDER: Priority[] = ['critical', 'high', 'medium', 'low'];
-
 /* ------------------------------------------------------------------ *
  * Chat / assistant
  * ------------------------------------------------------------------ */
 
 export type ChatRole = 'user' | 'assistant' | 'system';
-
-export type ExtractedIntent =
-  | 'medical'
-  | 'shelter'
-  | 'food-water'
-  | 'search-rescue'
-  | 'missing-person'
-  | 'evacuation'
-  | 'infrastructure'
-  | 'security';
 
 export interface ActionCard {
   id: string;
@@ -669,7 +669,7 @@ export const SYSTEM_STATUS: SystemStatus = {
   label: 'Live Relief Mode',
   detail: 'All relief systems operational. Emergency routing active.',
   updatedAt: '2026-09-26T05:41:00.000Z',
-  region: 'Northbank Region · Sector 4',
+  region: 'Kathmandu Valley · Bagmati Province',
   activeResponders: 148,
   openIncidents: 3,
 };
@@ -677,18 +677,3 @@ export const SYSTEM_STATUS: SystemStatus = {
 /* ------------------------------------------------------------------ *
  * Re-exports for icon convenience in mock data
  * ------------------------------------------------------------------ */
-
-export const CATEGORY_ICON_EXPORT = {
-  Ambulance,
-  Building2,
-  Droplets,
-  Flame,
-  HeartPulse,
-  Home,
-  LifeBuoy,
-  Search,
-  Siren,
-  Soup,
-  Users,
-  Wind,
-};

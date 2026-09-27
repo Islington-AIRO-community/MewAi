@@ -16,6 +16,8 @@ import type { LiveSession, LiveSessionSnapshot } from '@/lib/live-client';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { VoiceWaveform } from './voice-waveform';
+import { Eyebrow } from '@/components/ui/primitives';
+import { useLocale } from '@/lib/i18n';
 
 /**
  * The voice line's controls, transcript and state.
@@ -44,20 +46,24 @@ import { VoiceWaveform } from './voice-waveform';
  *    before it is stored.
  */
 
-const STATE_COPY: Record<
+/**
+ * Key pairs rather than copy.
+ *
+ * The sentences live in `lib/i18n-strings.ts` so a language change can swap
+ * them; keeping English here as well would give the same string two homes and
+ * let them drift.
+ */
+const STATE_KEYS: Record<
   LiveSessionSnapshot['state'],
   { label: string; hint: string }
 > = {
-  idle: { label: 'Voice is ready', hint: 'Press the button to start talking' },
-  connecting: { label: 'Connecting…', hint: 'Opening a voice channel' },
-  listening: {
-    label: 'Listening',
-    hint: 'Speak naturally. I will ask if I do not catch something.',
-  },
-  thinking: { label: 'Thinking', hint: 'Working out what you need' },
-  speaking: { label: 'Speaking', hint: 'Interrupt me at any point — just start talking' },
-  muted: { label: 'Microphone off', hint: 'I cannot hear you. Unmute when you are ready.' },
-  error: { label: 'Voice is unavailable', hint: 'Text chat below still works' },
+  idle: { label: 'voice.idle', hint: 'voice.idleHint' },
+  connecting: { label: 'voice.connecting', hint: 'voice.connectingHint' },
+  listening: { label: 'voice.listening', hint: 'voice.listeningHint' },
+  thinking: { label: 'voice.thinking', hint: 'voice.thinkingHint' },
+  speaking: { label: 'voice.speaking', hint: 'voice.speakingHint' },
+  muted: { label: 'voice.muted', hint: 'voice.mutedHint' },
+  error: { label: 'voice.error', hint: 'voice.errorHint' },
 };
 
 /**
@@ -70,22 +76,13 @@ const STATE_COPY: Record<
  * itself was refused. Without these the panel could only ever say "Connecting…",
  * which is true throughout and useless throughout.
  */
-const STAGE_COPY: Record<
+const STAGE_KEYS: Record<
   NonNullable<LiveSessionSnapshot['connectingStage']>,
   { label: string; hint: string }
 > = {
-  token: {
-    label: 'Connecting…',
-    hint: 'Asking our server for a voice channel',
-  },
-  socket: {
-    label: 'Connecting…',
-    hint: 'Reaching the voice service',
-  },
-  setup: {
-    label: 'Connecting…',
-    hint: 'Starting the voice session',
-  },
+  token: { label: 'voice.connecting', hint: 'voice.stage.token' },
+  socket: { label: 'voice.connecting', hint: 'voice.stage.socket' },
+  setup: { label: 'voice.connecting', hint: 'voice.stage.setup' },
 };
 
 export function VoicePanel({
@@ -109,7 +106,8 @@ export function VoicePanel({
   model: string;
   className?: string;
 }) {
-  const copy = STATE_COPY[snapshot.state];
+  const { t } = useLocale();
+  const stateKeys = STATE_KEYS[snapshot.state];
 
   /**
    * What the panel says, which is not always what the state is.
@@ -122,11 +120,17 @@ export function VoicePanel({
    * network. So the one thing worth saying plainly overrides the label.
    */
   const waitingOnMic = snapshot.micPending;
-  const stage = snapshot.connectingStage ? STAGE_COPY[snapshot.connectingStage] : null;
-  const label = waitingOnMic ? 'Waiting for permission' : stage ? stage.label : copy.label;
+  const stageKeys = snapshot.connectingStage
+    ? STAGE_KEYS[snapshot.connectingStage]
+    : null;
+  const label = waitingOnMic
+    ? t('voice.micPending')
+    : stageKeys
+      ? t(stageKeys.label)
+      : t(stateKeys.label);
   const hint = waitingOnMic
-    ? 'Your browser is asking whether this page may use your microphone. Choose Allow to talk, or Deny to carry on in text.'
-    : (stage ? stage.hint : copy.hint);
+    ? t('voice.micPendingHint')
+    : (stageKeys ? t(stageKeys.hint) : t(stateKeys.hint));
 
   /**
    * Whether there is a call to hang up on.
@@ -209,7 +213,7 @@ export function VoicePanel({
               variant="ghostLight"
               size="iconSm"
               onClick={onEnd}
-              srLabel="End the voice call and continue in text"
+              srLabel={t('voice.endContinue')}
               className="shrink-0"
             >
               <PhoneOff aria-hidden="true" />
@@ -236,7 +240,7 @@ export function VoicePanel({
             aria-live={snapshot.state === 'listening' ? 'assertive' : 'polite'}
             className="mt-3 text-center text-sm font-semibold text-white/80"
           >
-            {snapshot.state === 'listening' ? 'I am listening…' : hint}
+            {snapshot.state === 'listening' ? t('voice.iAmListening') : hint}
           </p>
 
           {snapshot.error && (
@@ -257,7 +261,7 @@ export function VoicePanel({
             <div className="mt-3 flex justify-center">
               <Button variant="ghostLight" size="sm" onClick={onStart}>
                 <Mic className="size-4" aria-hidden="true" />
-                Try voice again
+                {t('voice.retry')}
               </Button>
             </div>
           )}
@@ -282,9 +286,9 @@ export function VoicePanel({
                       : 'mr-8 border-dispatch-400/25 bg-dispatch-500/10',
                   )}
                 >
-                  <p className="text-2xs font-bold uppercase tracking-[0.1em] text-white/40">
-                    {turn.role === 'reporter' ? 'You said' : 'I said'}
-                  </p>
+                  <Eyebrow className="text-white/40">
+                    {t(turn.role === 'reporter' ? 'voice.youSaid' : 'voice.iSaid')}
+                  </Eyebrow>
                   <p className="mt-1 text-[15px] leading-relaxed text-white/95">
                     {turn.text}
                   </p>
@@ -293,9 +297,7 @@ export function VoicePanel({
             </AnimatePresence>
             {snapshot.turns.length === 0 && !snapshot.error && (
               <li className="text-center text-xs leading-relaxed text-white/40">
-                {inCall
-                  ? 'Nothing has been said yet. The transcript appears here as you talk, and it is what gets saved with your ticket.'
-                  : 'Start talking and your words appear here. Nothing is sent anywhere until you have read the summary and pressed submit.'}
+                {inCall ? t('voice.turnsEmptyInCall') : t('voice.turnsEmptyIdle')}
               </li>
             )}
           </ol>
@@ -322,16 +324,21 @@ export function VoicePanel({
             className="mb-4 flex items-end gap-2"
           >
             <label htmlFor="voice-reply" className="sr-only">
-              Type a reply instead of speaking
+              {t('voice.typeInsteadAria')}
             </label>
             <textarea
               id="voice-reply"
               name="voice-reply"
               rows={1}
-              placeholder="Or type your reply…"
+              placeholder={t('voice.typeInsteadPlaceholder')}
               className="min-h-11 flex-1 resize-none rounded-xl border border-white/15 bg-white/10 px-3 py-2.5 text-base leading-relaxed text-white placeholder:text-white/40 focus:border-white/40 focus:outline-none focus:ring-2 focus:ring-white/30"
             />
-            <Button type="submit" variant="ghostLight" size="icon" srLabel="Send this reply">
+            <Button
+              type="submit"
+              variant="ghostLight"
+              size="icon"
+              srLabel={t('voice.sendReply')}
+            >
               <Send aria-hidden="true" />
             </Button>
           </form>
@@ -342,9 +349,7 @@ export function VoicePanel({
             <button
               type="button"
               onClick={inCall ? onEnd : onStart}
-              aria-label={
-                inCall ? 'End the voice call' : 'Start the voice call'
-              }
+              aria-label={t(inCall ? 'voice.endCall' : 'voice.startCall')}
               className={cn(
                 'group relative grid size-[4.5rem] shrink-0 place-items-center rounded-full transition-all duration-200',
                 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-navy-950',
@@ -372,7 +377,7 @@ export function VoicePanel({
                 type="button"
                 onClick={onToggleMic}
                 aria-pressed={snapshot.muted}
-                aria-label={snapshot.muted ? 'Unmute microphone' : 'Mute microphone'}
+                aria-label={t(snapshot.muted ? 'voice.unmute' : 'voice.mute')}
                 className={cn(
                   'grid size-14 shrink-0 place-items-center rounded-full transition-all duration-200',
                   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-navy-950',
@@ -394,11 +399,11 @@ export function VoicePanel({
             <p className="text-2xs leading-relaxed text-white/45">
               {inCall ? (
                 <>
-                  Hands-free is always on — just start speaking to interrupt me.{' '}
+                  {t('voice.handsFree')}{' '}
                   <span className="text-white/30">({model})</span>
                 </>
               ) : (
-                'Nothing is recorded. The transcript is only kept if you choose to keep it on the review screen.'
+                t('voice.notRecorded')
               )}
             </p>
             <button
@@ -407,7 +412,7 @@ export function VoicePanel({
               className="inline-flex shrink-0 items-center gap-1.5 rounded-lg px-2 py-1 text-xs font-bold text-white underline-offset-4 hover:bg-white/10 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
             >
               <Keyboard className="size-3.5" aria-hidden="true" />
-              Use text instead
+              {t('voice.useText')}
             </button>
           </div>
         </div>

@@ -12,6 +12,7 @@ import {
   X,
 } from 'lucide-react';
 import type { ActionCard } from '@/lib/types';
+import { DEPARTMENTS } from '@/lib/types';
 import { cn, truncate } from '@/lib/utils';
 import { useApp } from '@/lib/store';
 import type { AiChatApi } from '@/lib/use-ai-chat';
@@ -20,6 +21,7 @@ import { Button } from '@/components/ui/button';
 import { TabList, TabPanel, TabsProvider } from '@/components/ui/tabs';
 import { ChatPanel } from './chat-panel';
 import { LiveVoice } from './live-voice';
+import { useLocale } from '@/lib/i18n';
 
 type Mode = 'chat' | 'voice';
 
@@ -61,6 +63,7 @@ export function ReliefAssistant({
   const { messages, actionCards, confirmActionCard, dismissActionCard } = useApp();
   const pathname = usePathname();
   const reduced = usePrefersReducedMotion();
+  const { t } = useLocale();
 
   const [open, setOpen] = React.useState(defaultOpen);
   const [mode, setMode] = React.useState<Mode>(defaultMode);
@@ -206,7 +209,7 @@ export function ReliefAssistant({
               isFullscreen ? 'text-navy-900' : 'text-white',
             )}
           >
-            FLARE Relief Assistant
+            {t('assistant.name')}
           </p>
           <p
             className={cn(
@@ -228,7 +231,7 @@ export function ReliefAssistant({
                 )}
               />
             </span>
-            Online · routes to 5 response departments
+            {t('assistant.online', { n: DEPARTMENTS.length })}
           </p>
         </div>
 
@@ -239,7 +242,7 @@ export function ReliefAssistant({
               size="iconSm"
               onClick={() => setExpanded((v) => !v)}
               aria-expanded={expanded}
-              srLabel={expanded ? 'Restore panel size' : 'Expand to full screen'}
+              srLabel={t(expanded ? 'assistant.restore' : 'assistant.expand')}
             >
               {expanded ? <Minimize2 aria-hidden="true" /> : <Maximize2 aria-hidden="true" />}
             </Button>
@@ -248,7 +251,7 @@ export function ReliefAssistant({
               variant="ghostLight"
               size="iconSm"
               onClick={() => setShow(false)}
-              srLabel="Close the relief assistant"
+              srLabel={t('assistant.close')}
             >
               <X aria-hidden="true" />
             </Button>
@@ -263,10 +266,10 @@ export function ReliefAssistant({
       {isFullscreen && (
         <div className="mt-3">
           <TabList
-            label="Assistant mode"
+            label={t('assistant.modeLabel')}
             items={[
-              { id: 'chat', label: 'Text chat', icon: MessageSquareText },
-              { id: 'voice', label: 'Live voice', icon: Mic },
+              { id: 'chat', label: t('assistant.mode.chat'), icon: MessageSquareText },
+              { id: 'voice', label: t('assistant.mode.voice'), icon: Mic },
             ]}
           />
         </div>
@@ -329,11 +332,7 @@ export function ReliefAssistant({
             onClick={() => setShow(true)}
             aria-haspopup="dialog"
             aria-expanded="false"
-            aria-label={
-              hasUnread
-                ? 'Open the FLARE Relief Assistant. You have new information captured from a previous conversation.'
-                : 'Open the FLARE Relief Assistant'
-            }
+            aria-label={t(hasUnread ? 'assistant.launchUnread' : 'assistant.launch')}
             className={cn(
               'group no-print no-tap-highlight relative grid size-14 shrink-0 place-items-center rounded-full',
               'bg-navy-900 text-white shadow-lift transition-transform duration-200 hover:scale-105 active:scale-95',
@@ -371,7 +370,7 @@ export function ReliefAssistant({
             ref={panelRef}
             role="dialog"
             aria-modal="false"
-            aria-label="FLARE Relief Assistant"
+            aria-label={t('assistant.name')}
             data-assistant-panel=""
             initial={reduced ? { opacity: 0 } : { opacity: 0, y: 20, scale: 0.98 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -405,7 +404,7 @@ export function ReliefAssistant({
               <p className="truncate text-2xs text-navy-400">
                 {latestAssistant
                   ? truncate(latestAssistant.text, 54)
-                  : 'Describe your situation to begin.'}
+                  : t('assistant.idleHint')}
               </p>
               <span className="shrink-0 text-2xs font-semibold text-navy-400">v4.2</span>
             </div>

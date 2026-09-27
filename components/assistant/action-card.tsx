@@ -5,10 +5,8 @@ import Link from 'next/link';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
   ArrowRight,
-  Building2,
   Check,
   CheckCircle2,
-  Info,
   Radio,
   ShieldCheck,
   Sparkles,
@@ -21,6 +19,8 @@ import { DEPARTMENT_STATUS_STYLES, getDepartment } from '@/lib/types';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn, reportCodeFromId, shortStamp } from '@/lib/utils';
+import { Eyebrow } from '@/components/ui/primitives';
+import { useLocale } from '@/lib/i18n';
 
 /**
  * System Action Card.
@@ -46,6 +46,8 @@ export function ActionCardBanner({
   const confirmed = card.status === 'confirmed';
   const dismissed = card.status === 'dismissed';
   const DeptIcon = dept.icon;
+  const { t, label } = useLocale();
+  const deptName = label('department', dept.id, dept.name);
 
   if (dismissed) return null;
 
@@ -56,7 +58,7 @@ export function ActionCardBanner({
       animate={{ opacity: 1, y: 0, scale: 1 }}
       exit={{ opacity: 0, y: -6, scale: 0.99 }}
       transition={{ duration: 0.32, ease: [0.16, 1, 0.3, 1] }}
-      aria-label={`Information captured. Redirecting request to ${dept.name}.`}
+      aria-label={t('cardBanner.ariaLabel', { dept: deptName })}
       className={cn(
         'relative overflow-hidden rounded-2xl border shadow-soft',
         confirmed ? 'border-relief-300 bg-relief-50/70' : 'border-dispatch-200 bg-white',
@@ -91,16 +93,14 @@ export function ActionCardBanner({
 
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <p className="text-2xs font-bold uppercase tracking-[0.1em] text-navy-400">
-              {card.title}
-            </p>
+            <Eyebrow className="text-navy-400">{card.title}</Eyebrow>
             <Badge
               tone="outline"
               size="xs"
               className="bg-white font-mono text-navy-600 ring-navy-200"
             >
               <Target className="size-3" aria-hidden="true" />
-              {Math.round(card.confidence * 100)}% confident
+              {t('cardBanner.confident', { n: Math.round(card.confidence * 100) })}
             </Badge>
           </div>
 
@@ -114,7 +114,7 @@ export function ActionCardBanner({
             variant="ghost"
             size="iconSm"
             onClick={() => onDismiss(card)}
-            srLabel="Dismiss this captured request"
+            srLabel={t('cardBanner.dismiss')}
             className="-mr-1 -mt-0.5 shrink-0 text-navy-400 hover:text-navy-700"
           >
             <X aria-hidden="true" />
@@ -127,9 +127,7 @@ export function ActionCardBanner({
         <dl className="grid grid-cols-1 gap-x-4 gap-y-2 rounded-xl bg-navy-50/80 p-3 ring-1 ring-inset ring-navy-200/70 sm:grid-cols-2">
           {card.fields.map((f) => (
             <div key={f.label} className="min-w-0">
-              <dt className="text-2xs font-bold uppercase tracking-[0.06em] text-navy-400">
-                {f.label}
-              </dt>
+              <Eyebrow as="dt">{f.label}</Eyebrow>
               <dd className="mt-0.5 truncate text-xs font-semibold text-navy-800" title={f.value}>
                 {f.value}
               </dd>
@@ -140,9 +138,7 @@ export function ActionCardBanner({
 
       {/* Routing target */}
       <div className="mx-5 mb-3.5 rounded-xl border border-navy-200 bg-white p-3">
-        <p className="text-2xs font-bold uppercase tracking-[0.08em] text-navy-400">
-          Redirecting request to
-        </p>
+        <Eyebrow>{t('cardBanner.routing')}</Eyebrow>
 
         <div className="mt-2 flex items-center gap-2.5">
           <span
@@ -152,10 +148,13 @@ export function ActionCardBanner({
             <DeptIcon className="size-4" />
           </span>
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-bold text-navy-900">{dept.name}</p>
+            <p className="truncate text-sm font-bold text-navy-900">{deptName}</p>
             <p className="truncate text-2xs text-navy-500">
-              {dept.crewsAvailable} of {dept.crewsTotal} crews available · avg{' '}
-              {dept.avgResponseMinutes} min
+              {t('cardBanner.crews', {
+                available: dept.crewsAvailable,
+                total: dept.crewsTotal,
+                n: dept.avgResponseMinutes,
+              })}
             </p>
           </div>
           <Badge
@@ -164,7 +163,7 @@ export function ActionCardBanner({
             className={cn('shrink-0', statusCfg.chip)}
           >
             <span className={cn('size-1.5 rounded-full', statusCfg.dot)} aria-hidden="true" />
-            {dept.statusLabel}
+            {label('status', dept.status, dept.statusLabel)}
           </Badge>
         </div>
       </div>
@@ -181,13 +180,15 @@ export function ActionCardBanner({
             >
               <p className="flex items-center gap-1.5 text-sm font-bold text-relief-700">
                 <Check className="size-4" strokeWidth={3} aria-hidden="true" />
-                Dispatched to {dept.shortName}
+                {t('cardBanner.dispatchedTo', {
+                  dept: label('departmentShort', dept.id, dept.shortName),
+                })}
               </p>
               {card.reportId && (
                 <Button asChild size="sm" variant="outline">
                   <Link href={`/reports/${card.reportId}`}>
                     <Radio className="size-4" aria-hidden="true" />
-                    Track {reportCodeFromId(card.reportId)}
+                    {t('cardBanner.track', { code: reportCodeFromId(card.reportId) })}
                     <ArrowRight className="size-4" aria-hidden="true" />
                   </Link>
                 </Button>
@@ -207,11 +208,11 @@ export function ActionCardBanner({
                 className="bg-dispatch-600 hover:bg-dispatch-700"
               >
                 <Zap className="size-4" aria-hidden="true" />
-                Confirm &amp; dispatch request
+                {t('cardBanner.confirm')}
               </Button>
               {onDismiss && (
                 <Button variant="ghost" size="sm" onClick={() => onDismiss(card)}>
-                  Not right — edit
+                  {t('cardBanner.edit')}
                 </Button>
               )}
             </motion.div>
@@ -226,45 +227,8 @@ export function ActionCardBanner({
 
       {/* Live region for screen readers when the card appears */}
       <span role="status" aria-live="polite" className="sr-only">
-        {confirmed
-          ? `Request confirmed and dispatched to ${dept.name}.`
-          : `Information captured. Confirm and dispatch request to ${dept.name}?`}
+        {t(confirmed ? 'cardBanner.srConfirmed' : 'cardBanner.srPending', { dept: deptName })}
       </span>
     </motion.article>
-  );
-}
-
-/* ------------------------------------------------------------------ *
- * Compact variant for the reports list / detail sidebar
- * ------------------------------------------------------------------ */
-
-export function ActionCardSummary({ card }: { card: ActionCard }) {
-  const dept = getDepartment(card.departmentId);
-  const confirmed = card.status === 'confirmed';
-
-  return (
-    <div className="flex items-start gap-3 rounded-xl border border-navy-200 bg-white p-3.5">
-      <span
-        className={cn(
-          'grid size-8 shrink-0 place-items-center rounded-lg ring-1 ring-inset',
-          confirmed
-            ? 'bg-relief-50 text-relief-700 ring-relief-200'
-            : 'bg-dispatch-50 text-dispatch-700 ring-dispatch-200',
-        )}
-        aria-hidden="true"
-      >
-        {confirmed ? (
-          <CheckCircle2 className="size-4" />
-        ) : (
-          <Info className="size-4" />
-        )}
-      </span>
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-bold text-navy-900">{card.headline}</p>
-        <p className="mt-0.5 truncate text-xs text-navy-500">
-          {confirmed ? 'Dispatched to' : 'Will route to'} {dept.name}
-        </p>
-      </div>
-    </div>
   );
 }

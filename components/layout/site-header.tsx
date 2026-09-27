@@ -24,15 +24,17 @@ import { useDismissable, useFocusTrap } from '@/lib/hooks';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Logo } from './logo';
+import { LanguageSwitcher } from './language-switcher';
 import { EmergencyStatusBadge } from '@/components/emergency/emergency-status-badge';
 import { SosButton } from '@/components/emergency/sos-button';
 import { SYSTEM_STATUS } from '@/lib/types';
+import { useLocale } from '@/lib/i18n';
 
 interface NavItem {
   href: string;
-  label: string;
+  labelKey: string;
   icon: typeof LayoutDashboard;
-  shortLabel: string;
+  shortLabelKey: string;
   /**
    * Hidden from signed-out visitors.
    *
@@ -46,11 +48,11 @@ interface NavItem {
 }
 
 const NAV: NavItem[] = [
-  { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, shortLabel: 'Home' },
-  { href: '/reports', label: 'My Reports', icon: FileText, shortLabel: 'Reports' },
-  { href: '/chat', label: 'AI Assistant', icon: MessageSquareText, shortLabel: 'Assist' },
-  { href: '/tickets', label: 'My Tickets', icon: Ticket, shortLabel: 'Tickets', signedInOnly: true },
-  { href: '/resources', label: 'Resources', icon: LifeBuoy, shortLabel: 'Help' },
+  { href: '/dashboard', labelKey: 'nav.dashboard', icon: LayoutDashboard, shortLabelKey: 'nav.mobile.home' },
+  { href: '/reports', labelKey: 'nav.reports', icon: FileText, shortLabelKey: 'nav.mobile.reports' },
+  { href: '/chat', labelKey: 'nav.assistant', icon: MessageSquareText, shortLabelKey: 'nav.mobile.assistant' },
+  { href: '/tickets', labelKey: 'nav.tickets', icon: Ticket, shortLabelKey: 'nav.tickets', signedInOnly: true },
+  { href: '/resources', labelKey: 'nav.resources', icon: LifeBuoy, shortLabelKey: 'nav.mobile.help' },
 ];
 
 function isActive(pathname: string, href: string) {
@@ -60,6 +62,7 @@ function isActive(pathname: string, href: string) {
 export function SiteHeader({ onOpenSos }: { onOpenSos: () => void }) {
   const pathname = usePathname();
   const { user } = useApp();
+  const { t } = useLocale();
   const [menuOpen, setMenuOpen] = React.useState(false);
   const close = React.useCallback(() => setMenuOpen(false), []);
   const menuRef = useDismissable<HTMLDivElement>(menuOpen, close);
@@ -78,18 +81,18 @@ export function SiteHeader({ onOpenSos }: { onOpenSos: () => void }) {
           <Link
             href="/dashboard"
             className="shrink-0 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dispatch-600 focus-visible:ring-offset-2"
-            aria-label="FLARE Relief Network — home"
+            aria-label={t('a11y.home')}
           >
             <Logo />
-            <span className="sr-only">FLARE Relief Network, home</span>
+            <span className="sr-only">{t('a11y.home')}</span>
           </Link>
 
           <Badge tone="navy" size="xs" className="hidden shrink-0 lg:inline-flex">
-            BETA
+            {t('status.beta')}
           </Badge>
 
           {/* Desktop nav */}
-          <nav aria-label="Primary" className="ml-4 hidden lg:block">
+          <nav aria-label={t('a11y.primaryNav')} className="ml-4 hidden lg:block">
             <ul className="flex items-center gap-1">
               {NAV.filter((item) => !item.signedInOnly || user).map((item) => {
                 const active = isActive(pathname, item.href);
@@ -108,7 +111,7 @@ export function SiteHeader({ onOpenSos }: { onOpenSos: () => void }) {
                       )}
                     >
                       <item.icon className="size-4" aria-hidden="true" />
-                      {item.label}
+                      {t(item.labelKey)}
                     </Link>
                   </li>
                 );
@@ -130,16 +133,18 @@ export function SiteHeader({ onOpenSos }: { onOpenSos: () => void }) {
               onClick={onOpenSos}
             >
               <Phone aria-hidden="true" />
-              <span className="hidden lg:inline">Emergency Contact</span>
-              <span className="lg:hidden">SOS</span>
+              <span className="hidden lg:inline">{t('status.emergencyContact')}</span>
+              <span className="lg:hidden">{t('status.sos')}</span>
             </Button>
 
             <SosButton
               size="sm"
               className="sm:hidden"
               onClick={onOpenSos}
-              srLabel="Open SOS emergency distress reporting"
+              srLabel={t('a11y.sosOpen')}
             />
+
+            <LanguageSwitcher />
 
             {/* Branches on `user` alone, which is null while the session is
                 still loading as well as when signed out. Rendering nothing
@@ -152,7 +157,13 @@ export function SiteHeader({ onOpenSos }: { onOpenSos: () => void }) {
                 Eliminating that swap entirely would mean server-rendering the
                 session on every route, i.e. making them all dynamic. */}
             {user ? (
-              <div className="relative" ref={menuRef}>
+              // `data-no-translate` on the account menu only, not on the header:
+              // this is the one place in the chrome that renders a real person's
+              // name and address, and it must never be handed to a translation
+              // model. Everything else up here is `t()` copy, which the curated
+              // tables already cover exactly, so excluding the whole header would
+              // only cost the nav its translation.
+              <div className="relative" ref={menuRef} data-no-translate>
                 <button
                   type="button"
                   onClick={() => setMenuOpen((v) => !v)}
@@ -172,14 +183,14 @@ export function SiteHeader({ onOpenSos }: { onOpenSos: () => void }) {
                     )}
                     aria-hidden="true"
                   />
-                  <span className="sr-only">Account menu</span>
+                  <span className="sr-only">{t('a11y.accountMenu')}</span>
                 </button>
 
                 {menuOpen && (
                   <div
                     ref={trapRef}
                     role="menu"
-                    aria-label="Account"
+                    aria-label={t('a11y.accountMenu')}
                     className="absolute right-0 top-[calc(100%+0.5rem)] w-72 animate-slide-up overflow-hidden rounded-2xl border border-navy-200 bg-white shadow-lift"
                   >
                     <div className="flex items-start gap-3 border-b border-navy-100 bg-navy-50/70 p-4">
@@ -189,18 +200,18 @@ export function SiteHeader({ onOpenSos }: { onOpenSos: () => void }) {
                         <p className="truncate text-xs text-navy-500">{user.email}</p>
                         {user.verified && (
                           <Badge tone="relief" size="xs" className="mt-1.5">
-                            Identity verified
+                            {t('account.verified')}
                           </Badge>
                         )}
                       </div>
                     </div>
 
                     <div className="p-1.5">
-                      <MenuLink href="/tickets" icon={Ticket} label="My tickets" />
-                      <MenuLink href="/reports" icon={FileText} label="My reports" />
-                      <MenuLink href="/chat" icon={Mic} label="Voice assistant" />
-                      <MenuLink href="/resources" icon={LifeBuoy} label="Relief resources" />
-                      <MenuLink href="/dashboard" icon={MapPin} label="Location & safety" />
+                      <MenuLink href="/tickets" icon={Ticket} label={t('account.menu.tickets')} />
+                      <MenuLink href="/reports" icon={FileText} label={t('account.menu.reports')} />
+                      <MenuLink href="/chat" icon={Mic} label={t('account.menu.voice')} />
+                      <MenuLink href="/resources" icon={LifeBuoy} label={t('account.menu.resources')} />
+                      <MenuLink href="/dashboard" icon={MapPin} label={t('account.menu.location')} />
                     </div>
 
                     <div className="border-t border-navy-100 p-1.5">
@@ -210,7 +221,7 @@ export function SiteHeader({ onOpenSos }: { onOpenSos: () => void }) {
                         className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm font-semibold text-navy-600 no-tap-highlight hover:bg-navy-50 hover:text-navy-900"
                       >
                         <Settings className="size-4" aria-hidden="true" />
-                        Settings
+                        {t('account.settings')}
                       </button>
                       <button
                         role="menuitem"
@@ -228,7 +239,7 @@ export function SiteHeader({ onOpenSos }: { onOpenSos: () => void }) {
                         className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm font-semibold text-emergency-700 no-tap-highlight hover:bg-emergency-50"
                       >
                         <LogOut className="size-4" aria-hidden="true" />
-                        Sign out
+                        {t('account.signOut')}
                       </button>
                     </div>
                   </div>
@@ -238,8 +249,8 @@ export function SiteHeader({ onOpenSos }: { onOpenSos: () => void }) {
               <Button asChild size="sm" className="shrink-0">
                 <Link href="/login">
                   <User aria-hidden="true" />
-                  <span className="hidden sm:inline">Sign in</span>
-                  <span className="sm:hidden">In</span>
+                  <span className="hidden sm:inline">{t('account.signIn')}</span>
+                  <span className="sm:hidden">{t('account.signInShort')}</span>
                 </Link>
               </Button>
             )}
@@ -251,7 +262,7 @@ export function SiteHeader({ onOpenSos }: { onOpenSos: () => void }) {
       <div className="flex items-center justify-between gap-3 border-b border-navy-200/80 bg-navy-900 px-4 py-2 md:hidden">
         <EmergencyStatusBadge size="sm" className="shrink-0" />
         <p className="truncate text-2xs font-medium text-white/60">
-          {SYSTEM_STATUS.activeResponders} responders active
+          {t('status.respondersActive', { n: SYSTEM_STATUS.activeResponders })}
         </p>
       </div>
     </header>

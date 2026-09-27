@@ -8,6 +8,7 @@ import type { StoredTicket } from '@/lib/ai-client';
 import type { ActionCard, ChatMessage, Report, StageId } from '@/lib/types';
 import { routeForSupportTypes, SUPPORT_TYPES } from '@/lib/types';
 import { reportCodeFromId } from '@/lib/utils';
+import { useLocale } from '@/lib/i18n';
 
 /* ------------------------------------------------------------------ *
  * Session
@@ -114,6 +115,21 @@ const AVATAR_SVG = (hue: number) =>
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const { data: session, status } = useSession();
   const user = React.useMemo(() => sessionToUser(session, status), [session, status]);
+
+  /**
+   * `t` through a ref, deliberately.
+   *
+   * The three system messages below are *written into the transcript* at the
+   * moment an action happens, not rendered live. Reading `t` straight from the
+   * hook would make it a dependency of `confirmActionCard` and
+   * `dismissActionCard`, and the second of those would then re-append its
+   * message every time the language changed — a duplicate line in the chat
+   * every time someone switched to Nepali. `tRef.current` is the language at the
+   * moment of the action, which is the one that should be recorded.
+   */
+  const { t } = useLocale();
+  const tRef = React.useRef(t);
+  tRef.current = t;
   const [reports, setReports] = React.useState<Report[]>(REPORTS);
   // Both start empty. A visitor's transcript must contain only what they
   // actually said: a seeded conversation rendered an emergency that never
@@ -267,9 +283,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         stageTimestamps: { submitted: at, triage: at },
         location: {
           label: 'Your current location',
-          area: 'Northbank Region',
-          lat: 40.7581,
-          lng: -74.0013,
+          area: 'Kathmandu',
+          lat: 27.7154,
+          lng: 85.3123,
           landmark: 'Shared from your device',
         },
         peopleAffected: 1,
@@ -305,7 +321,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           id: nextId('m'),
           role: 'system',
           at,
-          text: `Dispatch confirmed. Report ${reportCodeFromId(id)} created and pushed to the response team. You can track it from your dashboard.`,
+          text: tRef.current('store.dispatchConfirmed', {
+            code: reportCodeFromId(id),
+          }),
         },
       ]);
 
@@ -375,8 +393,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           // No geocoding in this app: the "map" is CSS/SVG around a fixed
           // centre. A ticket carries a described address, not coordinates, so
           // the point stands in for the area and the text carries the detail.
-          lat: 40.7581,
-          lng: -74.0013,
+          lat: 27.7154,
+          lng: 85.3123,
           landmark: ticket.location || 'Described by the reporter',
         },
         peopleAffected: ticket.people_affected ?? 1,
@@ -405,7 +423,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           id: nextId('m'),
           role: 'system',
           at,
-          text: `Ticket ${ticket.id} submitted and logged as ${reportCodeFromId(id)}. It is now in the response team's review queue — they will contact ${report.reporterName} on ${report.contactPreference === 'sms' ? `the number ${ticket.reporter_phone || 'provided'}` : 'the number provided'}.`,
+          text: tRef.current('store.ticketLogged', {
+            ticket: ticket.id,
+            code: reportCodeFromId(id),
+            contact:
+              report.contactPreference === 'sms' && ticket.reporter_phone
+                ? ticket.reporter_phone
+                : tRef.current('store.contactProvided'),
+          }),
         },
       ]);
 
@@ -425,7 +450,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           id: nextId('m'),
           role: 'system',
           at: nowIso(),
-          text: 'Capture dismissed. The details are still saved in this conversation if you need to send them later.',
+          text: tRef.current('store.captureDismissed'),
         },
       ]);
     },

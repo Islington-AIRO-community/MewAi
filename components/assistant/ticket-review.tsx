@@ -11,7 +11,6 @@ import {
   ChevronDown,
   ClipboardCheck,
   Info,
-  Loader2,
   MapPin,
   Pencil,
   Phone,
@@ -20,7 +19,7 @@ import {
   User,
   X,
 } from 'lucide-react';
-import type { SlotName, TicketDraft } from '@/lib/ai-client';
+import type { SlotName } from '@/lib/ai-client';
 import {
   ALWAYS_REQUIRED,
   ON_BEHALF_REQUIRED,
@@ -36,10 +35,13 @@ import {
   type SupportType,
 } from '@/lib/types';
 import { cn } from '@/lib/utils';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import type { AiChatApi } from '@/lib/use-ai-chat';
 import { ticketStatusLabel } from './ticket-status';
+import { Eyebrow } from '@/components/ui/primitives';
+import { Notice } from '@/components/ui/patterns';
+import { useLocale } from '@/lib/i18n';
 
 /**
  * Ticket review and submit.
@@ -79,9 +81,9 @@ export function TicketReview({
  * ------------------------------------------------------------------ */
 
 function TicketForm({ state, className }: { state: AiChatApi; className?: string }) {
-  const { draft, missing, rejected, busy, error } = state;
+  const { draft, missing, rejected, busy, errorKey } = state;
+  const { t, label } = useLocale();
   const rejectedSet = React.useMemo(() => new Set(rejected), [rejected]);
-  const missingSet = React.useMemo(() => new Set(missing), [missing]);
 
   // Attributes 1–6 from the spec, in order. `victimName`/`victimPhone` are
   // conditional on reporting for someone else, and move in when that is true.
@@ -113,44 +115,42 @@ function TicketForm({ state, className }: { state: AiChatApi; className?: string
       transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
       className={cn('flex flex-col', className)}
     >
-      <header className="flex items-start gap-3 border-b border-navy-100 px-4 py-3">
-        <span
-          className="grid size-9 shrink-0 place-items-center rounded-xl bg-dispatch-50 text-dispatch-700 ring-1 ring-inset ring-dispatch-200"
-          aria-hidden="true"
-        >
-          <ClipboardCheck className="size-4.5" />
-        </span>
-        <div className="min-w-0 flex-1">
-          <h2 className="text-sm font-bold tracking-tight text-navy-900">
-            Review your relief ticket
-          </h2>
-          <p className="mt-0.5 text-2xs leading-relaxed text-navy-500">
-            Everything here can be changed. Nothing is sent until you press submit.
-          </p>
-        </div>
-        <Button
-          variant="ghost"
-          size="iconSm"
-          onClick={state.reset}
-          srLabel="Back to the conversation"
-          className="-mr-1 -mt-0.5 shrink-0 text-navy-400 hover:text-navy-700"
-        >
-          <ArrowLeft aria-hidden="true" />
-        </Button>
-      </header>
+      <CardHeader
+        className="items-start px-4 py-3"
+        icon={
+          <span
+            className="grid size-9 shrink-0 place-items-center rounded-xl bg-dispatch-50 text-dispatch-700 ring-1 ring-inset ring-dispatch-200"
+            aria-hidden="true"
+          >
+            <ClipboardCheck className="size-4.5" />
+          </span>
+        }
+        actions={
+          <Button
+            variant="ghost"
+            size="iconSm"
+            onClick={state.reset}
+            srLabel={t('review.backToChat')}
+            className="-mr-1 -mt-0.5 shrink-0 text-navy-400 hover:text-navy-700"
+          >
+            <ArrowLeft aria-hidden="true" />
+          </Button>
+        }
+      >
+        <CardTitle titleAs="h2">{t('review.title')}</CardTitle>
+        <CardDescription className="text-2xs leading-relaxed">
+          {t('review.subtitle')}
+        </CardDescription>
+      </CardHeader>
 
       <div
         className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-4 py-4"
         style={{ maxHeight: MAX_PANEL_HEIGHT }}
       >
-        {error && (
-          <p
-            role="alert"
-            className="flex items-start gap-2 rounded-xl border border-emergency-200 bg-emergency-50 px-3 py-2.5 text-xs font-semibold leading-relaxed text-emergency-800"
-          >
-            <AlertCircle className="mt-px size-4 shrink-0" aria-hidden="true" />
-            <span>{error}</span>
-          </p>
+        {errorKey && (
+          <Notice tone="critical" icon={AlertCircle} role="alert">
+            {t(errorKey)}
+          </Notice>
         )}
 
         {attributes.map(({ slot, node }) => (
@@ -172,13 +172,8 @@ function TicketForm({ state, className }: { state: AiChatApi; className?: string
             stamped by the service when the ticket is written, so showing the
             conversation time here would be a lie about the record. */}
         <div className="rounded-xl bg-navy-50/50 p-3 ring-1 ring-inset ring-navy-200/60">
-          <p className="text-2xs font-bold uppercase tracking-[0.08em] text-navy-400">
-            Ticket time
-          </p>
-          <p className="mt-1 text-xs leading-relaxed text-navy-600">
-            Stamped automatically the moment you submit, so responders always know
-            when the call was made.
-          </p>
+          <Eyebrow>{t('review.ticketTime')}</Eyebrow>
+          <p className="mt-1 text-xs leading-relaxed text-navy-600">{t('review.ticketTimeBody')}</p>
         </div>
 
         {/* Optional attribute, clearly marked as such. */}
@@ -189,8 +184,8 @@ function TicketForm({ state, className }: { state: AiChatApi; className?: string
             inputMode="numeric"
             value={draft.people_affected}
             onChange={(e) => state.edit({ people_affected: e.target.value })}
-            placeholder="e.g. 4"
-            aria-label="How many people need help"
+            placeholder={t('review.peoplePlaceholder')}
+            aria-label={t('review.peopleAria')}
             className={inputClass}
           />
         </div>
@@ -218,7 +213,7 @@ function TicketForm({ state, className }: { state: AiChatApi; className?: string
             className="flex-1"
           >
             <Send aria-hidden="true" />
-            Submit ticket
+            {t('review.submit')}
           </Button>
           <Button
             variant="ghost"
@@ -227,7 +222,7 @@ function TicketForm({ state, className }: { state: AiChatApi; className?: string
             disabled={busy}
             className="shrink-0"
           >
-            Back
+            {t('review.back')}
           </Button>
         </div>
 
@@ -235,18 +230,18 @@ function TicketForm({ state, className }: { state: AiChatApi; className?: string
           {complete ? (
             <>
               <ShieldCheck className="mt-px size-3.5 shrink-0 text-relief-600" aria-hidden="true" />
-              <span>
-                All required details are present. A response team reviews every ticket
-                before anyone is dispatched, and you will be told what happens next.
-              </span>
+              <span>{t('review.complete')}</span>
             </>
           ) : (
             <>
               <Info className="mt-px size-3.5 shrink-0 text-navy-400" aria-hidden="true" />
               <span>
-                <span className="nums font-bold">{missing.length}</span>{' '}
-                {missing.length === 1 ? 'detail is' : 'details are'} still needed:{' '}
-                {missing.map((slot) => SLOT_LABELS[slot].toLowerCase()).join(', ')}.
+                {t('review.stillNeeded', {
+                  n: missing.length,
+                  slots: missing
+                    .map((slot) => label('slot', slot, SLOT_LABELS[slot]))
+                    .join(', '),
+                })}
               </span>
             </>
           )}
@@ -285,6 +280,7 @@ const inputClass = cn(
  * both readers for something that is indistinguishable from a typed ticket.
  */
 function VoiceTranscriptDisclosure({ state }: { state: AiChatApi }) {
+  const { t } = useLocale();
   const [open, setOpen] = React.useState(false);
   const turns = state.voiceTranscript;
 
@@ -303,21 +299,12 @@ function VoiceTranscriptDisclosure({ state }: { state: AiChatApi }) {
             htmlFor="save-voice-transcript"
             className="block text-xs font-bold text-navy-800"
           >
-            Save what you said with this ticket
+            {t('review.voice.saveLabel')}
           </label>
           <p className="mt-1 text-2xs leading-relaxed text-navy-600">
-            {state.saveVoiceTranscript ? (
-              <>
-                The <span className="nums font-semibold">{turns.length}</span> spoken
-                messages will be stored on the ticket. You can read them again from your
-                ticket, and a responder working your case can too.
-              </>
-            ) : (
-              <>
-                Only the details above will be stored. The spoken messages will be
-                discarded when you submit.
-              </>
-            )}
+            {state.saveVoiceTranscript
+              ? t('review.voice.saveBody', { n: turns.length })
+              : t('review.voice.discardBody')}
           </p>
         </div>
       </div>
@@ -328,15 +315,21 @@ function VoiceTranscriptDisclosure({ state }: { state: AiChatApi }) {
         aria-expanded={open}
         className="mt-2 flex min-h-11 w-full items-center justify-between rounded-lg px-2 text-2xs font-bold uppercase tracking-[0.08em] text-dispatch-700 hover:bg-dispatch-100/60"
       >
-        {open ? 'Hide the transcript' : 'Read the transcript'}
+        {open ? t('review.voice.hide') : t('review.voice.show')}
         <ChevronDown
           aria-hidden="true"
           className={cn('size-4 transition-transform', open && 'rotate-180')}
         />
       </button>
 
+      {/* `data-no-translate` on the list below, same reason as the filed
+          transcript: this is what the reporter said, and it is what the ticket
+          gets built from. */}
       {open && (
-        <ol className="mt-1 max-h-64 space-y-2 overflow-y-auto overscroll-contain">
+        <ol
+          className="mt-1 max-h-64 space-y-2 overflow-y-auto overscroll-contain"
+          data-no-translate
+        >
           {turns.map((turn, i) => (
             <li
               // Re-renders on every transcription chunk, so the index is the
@@ -350,10 +343,10 @@ function VoiceTranscriptDisclosure({ state }: { state: AiChatApi }) {
               )}
             >
               <span className="sr-only">
-                {turn.role === 'reporter' ? 'You said: ' : 'Assistant said: '}
+                {t(turn.role === 'reporter' ? 'review.voice.youSaid' : 'review.voice.assistantSaid')}
               </span>
               <span aria-hidden="true" className="font-bold">
-                {turn.role === 'reporter' ? 'You' : 'Assistant'}
+                {t(turn.role === 'reporter' ? 'review.voice.you' : 'review.voice.assistant')}
               </span>{' '}
               {turn.text}
             </li>
@@ -374,6 +367,7 @@ function FieldHeader({
   state: AiChatApi;
   optional?: boolean;
 }) {
+  const { t, label } = useLocale();
   const required = state.draft.on_behalf_of_other
     ? [...ALWAYS_REQUIRED, ...ON_BEHALF_REQUIRED]
     : ALWAYS_REQUIRED;
@@ -381,22 +375,21 @@ function FieldHeader({
 
   return (
     <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-      <p className="text-2xs font-bold uppercase tracking-[0.08em] text-navy-500">
-        {SLOT_LABELS[slot]}
-      </p>
+      <Eyebrow className="text-navy-500">{label('slot', slot, SLOT_LABELS[slot])}</Eyebrow>
       <span
         className={cn(
           'rounded px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide',
           isRequired ? 'bg-navy-900 text-white' : 'bg-navy-200 text-navy-600',
         )}
       >
-        {isRequired ? 'Required' : 'Optional'}
+        {t(isRequired ? 'review.required' : 'review.optional')}
       </span>
     </div>
   );
 }
 
 function TextField({ slot, state }: { slot: SlotName; state: AiChatApi }) {
+  const { t, label } = useLocale();
   const value =
     slot === 'reporterName'
       ? state.draft.reporter_name
@@ -418,14 +411,15 @@ function TextField({ slot, state }: { slot: SlotName; state: AiChatApi }) {
               : { people_affected: e.target.value },
         )
       }
-      placeholder={slot === 'reporterName' ? 'e.g. Diego Alvarez' : 'e.g. Maria Alvarez'}
-      aria-label={SLOT_LABELS[slot]}
+      placeholder={t(slot === 'reporterName' ? 'review.namePlaceholder' : 'review.victimNamePlaceholder')}
+      aria-label={label('slot', slot, SLOT_LABELS[slot])}
       className={inputClass}
     />
   );
 }
 
 function PhoneField({ slot, state }: { slot: SlotName; state: AiChatApi }) {
+  const { t, label } = useLocale();
   const value =
     slot === 'reporterPhone' ? state.draft.reporter_phone : state.draft.victim_phone;
   const invalid = value.trim().length > 0 && !isUsablePhone(value);
@@ -462,8 +456,8 @@ function PhoneField({ slot, state }: { slot: SlotName; state: AiChatApi }) {
               );
             }
           }}
-          placeholder="e.g. 555-0143"
-          aria-label={SLOT_LABELS[slot]}
+          placeholder={t('review.phonePlaceholder')}
+          aria-label={label('slot', slot, SLOT_LABELS[slot])}
           aria-invalid={invalid || undefined}
           className={cn(inputClass, 'pl-9', invalid && 'border-emergency-400 ring-emergency-300')}
         />
@@ -471,7 +465,7 @@ function PhoneField({ slot, state }: { slot: SlotName; state: AiChatApi }) {
       {invalid && (
         <p className="mt-1.5 flex items-center gap-1 text-2xs font-semibold text-emergency-700">
           <AlertCircle className="size-3" aria-hidden="true" />
-          That does not look like a number a responder can dial.
+          {t('review.phoneInvalid')}
         </p>
       )}
     </>
@@ -479,19 +473,21 @@ function PhoneField({ slot, state }: { slot: SlotName; state: AiChatApi }) {
 }
 
 function SummaryField({ state }: { state: AiChatApi }) {
+  const { t, label } = useLocale();
   return (
     <textarea
       rows={3}
       value={state.draft.summary}
       onChange={(e) => state.edit({ summary: e.target.value })}
-      placeholder="In your own words: what is happening and what do they need?"
-      aria-label={SLOT_LABELS.summary}
+      placeholder={t('review.summaryPlaceholder')}
+      aria-label={label('slot', 'summary', SLOT_LABELS.summary)}
       className={cn(inputClass, 'resize-none')}
     />
   );
 }
 
 function LocationField({ state }: { state: AiChatApi }) {
+  const { t, label } = useLocale();
   return (
     <div className="relative mt-1.5">
       <MapPin
@@ -502,8 +498,8 @@ function LocationField({ state }: { state: AiChatApi }) {
         type="text"
         value={state.draft.location}
         onChange={(e) => state.edit({ location: e.target.value })}
-        placeholder="e.g. 12 Beacon St, Eastvale — flat 4B, green door"
-        aria-label={SLOT_LABELS.location}
+        placeholder={t('review.locationPlaceholder')}
+        aria-label={label('slot', 'location', SLOT_LABELS.location)}
         className={cn(inputClass, 'pl-9')}
       />
     </div>
@@ -511,11 +507,12 @@ function LocationField({ state }: { state: AiChatApi }) {
 }
 
 function SupportPicker({ state }: { state: AiChatApi }) {
+  const { t, label } = useLocale();
   const selected = state.draft.support_needed;
 
   return (
     <fieldset className="mt-2">
-      <legend className="sr-only">{SLOT_LABELS.supportNeeded}</legend>
+      <legend className="sr-only">{label('slot', 'supportNeeded', SLOT_LABELS.supportNeeded)}</legend>
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         {SUPPORT_TYPE_LIST.map((support) => {
           const active = selected.includes(support.id);
@@ -546,7 +543,7 @@ function SupportPicker({ state }: { state: AiChatApi }) {
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block text-xs font-bold leading-snug text-navy-900">
-                  {support.label}
+                  {label('support', support.id, support.label)}
                 </span>
                 <span className="mt-0.5 block text-2xs leading-relaxed text-navy-500">
                   {support.description}
@@ -559,7 +556,7 @@ function SupportPicker({ state }: { state: AiChatApi }) {
       {selected.length === 0 && (
         <p className="mt-2 flex items-center gap-1 text-2xs font-semibold text-alert-700">
           <AlertCircle className="size-3" aria-hidden="true" />
-          Pick at least one so the right team is contacted.
+          {t('review.pickSupport')}
         </p>
       )}
     </fieldset>
@@ -567,9 +564,10 @@ function SupportPicker({ state }: { state: AiChatApi }) {
 }
 
 function UrgencyPicker({ state }: { state: AiChatApi }) {
+  const { t, label } = useLocale();
   return (
     <fieldset className="mt-2">
-      <legend className="sr-only">{SLOT_LABELS.urgency}</legend>
+      <legend className="sr-only">{label('slot', 'urgency', SLOT_LABELS.urgency)}</legend>
       <div className="grid grid-cols-2 gap-2">
         {(['critical', 'high', 'medium', 'low'] as const).map((level) => {
           const meta = PRIORITIES[level as Priority];
@@ -594,11 +592,14 @@ function UrgencyPicker({ state }: { state: AiChatApi }) {
                 aria-hidden="true"
               />
               <span className="min-w-0 flex-1">
-                <span className="block text-xs font-bold text-navy-900">{meta.label}</span>
+                <span className="block text-xs font-bold text-navy-900">
+                  {label('priority', level, meta.label)}
+                </span>
                 <span className="nums block text-2xs text-navy-500">
-                  {meta.slaMinutes >= 60
-                    ? `${Math.round(meta.slaMinutes / 60)}h target`
-                    : `${meta.slaMinutes} min target`}
+                  {t(
+                    meta.slaMinutes >= 60 ? 'review.targetHours' : 'review.targetMinutes',
+                    { n: meta.slaMinutes >= 60 ? Math.round(meta.slaMinutes / 60) : meta.slaMinutes },
+                  )}
                 </span>
               </span>
             </button>
@@ -610,6 +611,7 @@ function UrgencyPicker({ state }: { state: AiChatApi }) {
 }
 
 function OnBehalfToggle({ state }: { state: AiChatApi }) {
+  const { t } = useLocale();
   const on = state.draft.on_behalf_of_other;
   return (
     <button
@@ -635,12 +637,10 @@ function OnBehalfToggle({ state }: { state: AiChatApi }) {
       </span>
       <span className="min-w-0 flex-1">
         <span className="block text-xs font-bold text-navy-900">
-          {on ? 'Reporting for someone else' : 'I am the person who needs help'}
+          {t(on ? 'review.onBehalf.for' : 'review.onBehalf.self')}
         </span>
         <span className="mt-0.5 block text-2xs leading-relaxed text-navy-500">
-          {on
-            ? "Their name and number are required, so a responder can reach them directly."
-            : 'Your own name and number cover both you and the ticket.'}
+          {t(on ? 'review.onBehalf.forBody' : 'review.onBehalf.selfBody')}
         </span>
       </span>
     </button>
@@ -653,6 +653,7 @@ function OnBehalfToggle({ state }: { state: AiChatApi }) {
 
 function TicketReceipt({ state, className }: { state: AiChatApi; className?: string }) {
   const ticket = state.ticket;
+  const { t, locale, label } = useLocale();
   if (!ticket) return null;
 
   return (
@@ -681,55 +682,69 @@ function TicketReceipt({ state, className }: { state: AiChatApi; className?: str
             {ticket.id}
           </p>
           <h2 className="mt-1 text-base font-bold tracking-tight text-navy-900">
-            Your ticket has been submitted
+            {t('receipt.title')}
           </h2>
-          <p className="mt-1.5 text-xs leading-relaxed text-navy-500">
-            A response team reviews every ticket before anyone is dispatched. You will be told
-            what happens next on the number you gave us.
-          </p>
+          <p className="mt-1.5 text-xs leading-relaxed text-navy-500">{t('receipt.body')}</p>
         </div>
 
-        <dl className="mt-5 space-y-2.5 rounded-xl bg-navy-50/70 p-3.5 ring-1 ring-inset ring-navy-200">
-          <ReceiptRow label="Reference" value={ticket.id} mono />
+        {/* `data-no-translate`: the receipt's facts — reference, submitted-at,
+            location, and the support types the reporter is about to be called
+            about. The sentences around it are curated and translated; the values
+            in this list are a record to be read back exactly. */}
+        <dl
+          className="mt-5 space-y-2.5 rounded-xl bg-navy-50/70 p-3.5 ring-1 ring-inset ring-navy-200"
+          data-no-translate
+        >
+          <ReceiptRow label={t('receipt.row.reference')} value={ticket.id} mono />
           <ReceiptRow
-            label="Submitted"
-            value={new Date(ticket.created_at).toLocaleString('en-US', {
-              dateStyle: 'medium',
-              timeStyle: 'short',
-            })}
+            label={t('receipt.row.submitted')}
+            // `numberingSystem: 'latn'` is not decoration: a Nepali-locale date
+            // otherwise renders in Devanagari digits, and the reference above it
+            // and the phone number a responder calls back are both Latin. Mixed
+            // digit systems in one receipt is how a reference gets misread.
+            value={new Date(ticket.created_at).toLocaleString(
+              locale === 'ne' ? 'ne-NP' : 'en-US',
+              { dateStyle: 'medium', timeStyle: 'short', numberingSystem: 'latn' },
+            )}
           />
-          <ReceiptRow label="Status" value={ticketStatusLabel(ticket.status)} />
           <ReceiptRow
-            label="Support"
+            label={t('receipt.row.status')}
+            value={label('ticketStatus', ticket.status, ticketStatusLabel(ticket.status))}
+          />
+          <ReceiptRow
+            label={t('receipt.row.support')}
             value={ticket.support_needed
-              .map((t) => SUPPORT_TYPE_LIST.find((s) => s.id === t)?.shortLabel ?? t)
+              .map((type) => {
+                const meta = SUPPORT_TYPE_LIST.find((s) => s.id === type);
+                return meta ? label('support', meta.id, meta.shortLabel) : type;
+              })
               .join(', ')}
           />
-          <ReceiptRow label="Priority" value={ticket.urgency} />
-          <ReceiptRow label="Location" value={ticket.location} />
+          <ReceiptRow
+            label={t('receipt.row.priority')}
+            value={label('priority', ticket.urgency, ticket.urgency)}
+          />
+          <ReceiptRow label={t('receipt.row.location')} value={ticket.location} />
         </dl>
 
         <p className="mt-3 flex items-start gap-1.5 text-2xs leading-relaxed text-navy-500">
           <Info className="mt-px size-3.5 shrink-0" aria-hidden="true" />
           {ticket.owner_email ? (
             <span>
-              Keep this reference. You can follow this ticket from{' '}
+              {t('receipt.ownedBefore')}{' '}
               <Link
                 href="/tickets"
                 className="font-semibold text-navy-700 underline underline-offset-2"
               >
-                your tickets
+                {t('receipt.ownedLink')}
               </Link>{' '}
-              to check its status or add a message.
+              {t('receipt.ownedAfter')}
             </span>
           ) : (
             // Signed out at intake, so there is nothing to look the ticket up
             // by later. Saying so plainly is the point: a dead link here would
             // send someone looking for a page that can never find their ticket.
-            <span>
-              Keep this reference. You filed this without signing in, so it cannot be
-              reopened from an account — quote it to any response team that contacts you.
-            </span>
+            <span>{t('receipt.orphanNote')}</span>
           )}
         </p>
       </div>
@@ -747,10 +762,10 @@ function TicketReceipt({ state, className }: { state: AiChatApi; className?: str
             className="flex-1"
           >
             <Pencil aria-hidden="true" />
-            Report something else
+            {t('receipt.another')}
           </Button>
           <Button variant="ghost" size="md" onClick={state.dismissTicket}>
-            Done
+            {t('receipt.done')}
           </Button>
         </div>
       </footer>
@@ -769,9 +784,9 @@ function ReceiptRow({
 }) {
   return (
     <div className="flex items-baseline gap-3">
-      <dt className="w-24 shrink-0 text-2xs font-bold uppercase tracking-[0.06em] text-navy-400">
+      <Eyebrow as="dt" className="w-24 shrink-0 text-navy-400">
         {label}
-      </dt>
+      </Eyebrow>
       <dd
         className={cn(
           'min-w-0 flex-1 break-words text-xs font-semibold text-navy-800',
@@ -792,6 +807,7 @@ function ReceiptRow({
  * ------------------------------------------------------------------ */
 
 export function IntakeChecklist({ state }: { state: AiChatApi }) {
+  const { label } = useLocale();
   if (state.missing.length === 0) return null;
   return (
     <AnimatePresence initial={false}>
@@ -804,13 +820,15 @@ export function IntakeChecklist({ state }: { state: AiChatApi }) {
         {state.missing.map((slot) => (
           <li key={slot} className="flex items-center gap-2 text-2xs text-navy-500">
             <X className="size-3 shrink-0 text-navy-300" aria-hidden="true" />
-            <span className="font-semibold text-navy-700">{SLOT_LABELS[slot]}</span>
-            <span className="min-w-0 truncate text-navy-400">{slotHint(slot)}</span>
+            <span className="font-semibold text-navy-700">
+              {label('slot', slot, SLOT_LABELS[slot])}
+            </span>
+            <span className="min-w-0 truncate text-navy-400">
+              {label('slotHint', slot, slotHint(slot))}
+            </span>
           </li>
         ))}
       </motion.ul>
     </AnimatePresence>
   );
 }
-
-export { Loader2 };

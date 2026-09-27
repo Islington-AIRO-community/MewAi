@@ -8,8 +8,6 @@ import {
   ChevronRight,
   Clock3,
   MapPin,
-  MessageSquareText,
-  Phone,
   Radio,
   Users,
   Waves,
@@ -21,6 +19,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card } from '@/components/ui/card';
 import { PriorityBadge, StageChip } from './badges';
 import { StepperBar } from './progress-stepper';
+import { useLocale } from '@/lib/i18n';
 
 /**
  * Report card. The whole card is clickable via a stretched link, while
@@ -42,6 +41,7 @@ export function ReportCard({
    */
   titleTag?: 'h2' | 'h3' | 'h4' | 'p';
 }) {
+  const { t, label: tlabel } = useLocale();
   const category = CATEGORIES[report.category];
   const dept = getDepartment(report.departmentId);
   const CategoryIcon = category.icon;
@@ -87,13 +87,7 @@ export function ReportCard({
               <StageChip stage={report.currentStage} />
               <span className="inline-flex items-center gap-1 text-2xs font-semibold text-navy-400">
                 <Radio className="size-3" aria-hidden="true" />
-                {report.channel === 'voice'
-                  ? 'Voice'
-                  : report.channel === 'sos'
-                    ? 'SOS'
-                    : report.channel === 'web'
-                      ? 'Web'
-                      : 'Chat'}
+                {t(`card.channel.${report.channel}`)}
               </span>
             </div>
 
@@ -104,7 +98,7 @@ export function ReportCard({
               >
                 <span className="absolute left-0 top-0 z-20 h-full w-1" aria-hidden="true" />
                 {report.title}
-                <span className="sr-only"> — open full report {code}</span>
+                <span className="sr-only">{t('card.openFull', { code })}</span>
               </Link>
             </TitleTag>
 
@@ -118,14 +112,14 @@ export function ReportCard({
             <dl className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-navy-500">
               <div className="flex items-center gap-1.5">
                 <MapPin className="size-3.5 shrink-0 text-navy-400" aria-hidden="true" />
-                <dt className="sr-only">Location</dt>
+                <dt className="sr-only">{t('card.location')}</dt>
                 <dd className="max-w-[16rem] truncate font-semibold text-navy-600">
                   {report.location.label}, {report.location.area}
                 </dd>
               </div>
               <div className="flex items-center gap-1.5">
                 <Clock3 className="size-3.5 shrink-0 text-navy-400" aria-hidden="true" />
-                <dt className="sr-only">Submitted</dt>
+                <dt className="sr-only">{t('detail.submitted')}</dt>
                 <dd className="nums font-semibold text-navy-600">
                   {relativeTime(report.createdAt)} · {shortStamp(report.createdAt)}
                 </dd>
@@ -133,9 +127,9 @@ export function ReportCard({
               {report.peopleAffected > 0 && (
                 <div className="flex items-center gap-1.5">
                   <Users className="size-3.5 shrink-0 text-navy-400" aria-hidden="true" />
-                  <dt className="sr-only">People affected</dt>
+                  <dt className="sr-only">{t('detail.peopleAffected')}</dt>
                   <dd className="nums font-semibold text-navy-600">
-                    {report.peopleAffected} affected
+                    {t('detail.affected', { n: report.peopleAffected })}
                   </dd>
                 </div>
               )}
@@ -166,7 +160,7 @@ export function ReportCard({
             {report.vulnerability.length > 3 && (
               <li>
                 <Badge tone="quiet" size="xs">
-                  +{report.vulnerability.length - 3} more
+                  {t('card.moreFlags', { n: report.vulnerability.length - 3 })}
                 </Badge>
               </li>
             )}
@@ -183,11 +177,13 @@ export function ReportCard({
               <dept.icon className="size-4" />
             </span>
             <div className="min-w-0">
-              <p className="truncate text-xs font-bold text-navy-800">{dept.shortName}</p>
+              <p className="truncate text-xs font-bold text-navy-800">
+                {tlabel('departmentShort', dept.id, dept.shortName)}
+              </p>
               <p className="truncate text-2xs text-navy-400">
                 {report.responder
-                  ? `${report.responder.callSign}${report.responder.etaMinutes ? ` · ETA ${report.responder.etaMinutes} min` : ''}`
-                  : 'Awaiting crew'}
+                  ? `${report.responder.callSign}${report.responder.etaMinutes ? ` · ${t('card.eta', { n: report.responder.etaMinutes })}` : ''}`
+                  : t('card.awaitingCrew')}
               </p>
             </div>
           </div>
@@ -195,11 +191,11 @@ export function ReportCard({
           {report.etaMinutes ? (
             <Badge tone={report.etaMinutes <= 8 ? 'emergency' : 'dispatch'} size="sm">
               <Waves className="size-3" aria-hidden="true" />
-              ETA {report.etaMinutes} min
+              {t('card.eta', { n: report.etaMinutes })}
             </Badge>
           ) : (
             <Badge tone="quiet" size="sm">
-              Assigned
+              {t('card.assigned')}
             </Badge>
           )}
         </div>
@@ -268,43 +264,5 @@ export function ReportRow({ report, className }: { report: Report; className?: s
         </span>
       </Link>
     </li>
-  );
-}
-
-/* ------------------------------------------------------------------ *
- * Inline status strip for a dispatched report
- * ------------------------------------------------------------------ */
-
-export function DispatchStrip({ report }: { report: Report }) {
-  if (!report.responder) return null;
-  return (
-    <div className="flex flex-wrap items-center gap-3 rounded-xl bg-dispatch-50 p-3.5 ring-1 ring-inset ring-dispatch-200">
-      <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-white text-dispatch-700 ring-1 ring-inset ring-dispatch-200">
-        <Phone className="size-4" aria-hidden="true" />
-      </span>
-      <div className="min-w-0 flex-1">
-        <p className="text-xs font-bold text-navy-900">
-          {report.responder.unit} · {report.responder.callSign}
-        </p>
-        <p className="truncate text-2xs text-navy-500">
-          {report.responder.certifications.join(' · ')}
-        </p>
-      </div>
-      {report.responder.etaMinutes ? (
-        <Badge tone="dispatch" size="sm">
-          <Waves className="size-3" aria-hidden="true" />
-          {report.responder.etaMinutes} min
-        </Badge>
-      ) : null}
-    </div>
-  );
-}
-
-export function ChatHint() {
-  return (
-    <p className="flex items-center gap-1.5 text-xs text-navy-400">
-      <MessageSquareText className="size-3.5" aria-hidden="true" />
-      Reply to your assistant any time
-    </p>
   );
 }

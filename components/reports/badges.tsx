@@ -3,9 +3,10 @@
 import * as React from 'react';
 import { AlertOctagon, AlertTriangle, ArrowDownRight, ArrowUpRight, Circle } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
-import { PRIORITIES, type Priority, type SystemMode } from '@/lib/types';
-import { statusConfig } from '@/components/emergency/emergency-status-badge';
+import { PRIORITIES, type Priority } from '@/lib/types';
 import { cn } from '@/lib/utils';
+import { Eyebrow } from '@/components/ui/primitives';
+import { useLocale } from '@/lib/i18n';
 
 /* ------------------------------------------------------------------ *
  * Priority badge — shape + label + colour (never colour alone)
@@ -29,6 +30,7 @@ export function PriorityBadge({
   showSla?: boolean;
   className?: string;
 }) {
+  const { t, label: tlabel } = useLocale();
   const meta = PRIORITIES[priority];
   const Icon = PRIORITY_ICON[priority];
 
@@ -39,24 +41,14 @@ export function PriorityBadge({
       className={cn(meta.chip, 'ring-inset', className)}
     >
       <Icon className="size-3.5 shrink-0" aria-hidden="true" fill={priority === 'critical' ? 'currentColor' : 'none'} />
-      {meta.label}
+      {tlabel('priority', priority, meta.label)}
       {showSla && (
         <span className="font-normal opacity-80">
-          · {meta.slaMinutes >= 1440 ? '24h' : `${meta.slaMinutes}m`}
+          · {meta.slaMinutes >= 1440 ? '24h' : t('badges.minutesShort', { n: meta.slaMinutes })}
         </span>
       )}
-      <span className="sr-only"> priority</span>
+      <span className="sr-only"> {t('badges.prioritySuffix')}</span>
     </Badge>
-  );
-}
-
-/** Small coloured bar used on report cards and list rows. */
-export function PriorityBar({ priority, className }: { priority: Priority; className?: string }) {
-  return (
-    <span
-      className={cn('block w-1 rounded-full', PRIORITIES[priority].bar, className)}
-      aria-hidden="true"
-    />
   );
 }
 
@@ -64,6 +56,14 @@ export function PriorityBar({ priority, className }: { priority: Priority; class
  * Status chip for report lifecycle
  * ------------------------------------------------------------------ */
 
+/**
+ * Lifecycle wording, deliberately not `STAGES[].label`.
+ *
+ * `STAGES` names the routing states a responder's queue is in; this names what
+ * the reporter is told, which is coarser and plainer ("Under review" rather than
+ * "Triage"). Two vocabularies on purpose — see `NE_TABLES.stageChip` for why
+ * they are separate tables rather than one reused twice.
+ */
 const STAGE_CHIP: Record<string, { label: string; cls: string }> = {
   submitted: { label: 'Submitted', cls: 'bg-navy-100 text-navy-700 ring-navy-200' },
   triage: { label: 'Under review', cls: 'bg-alert-50 text-alert-800 ring-alert-200' },
@@ -73,10 +73,11 @@ const STAGE_CHIP: Record<string, { label: string; cls: string }> = {
 };
 
 export function StageChip({ stage, className }: { stage: string; className?: string }) {
+  const { label } = useLocale();
   const cfg = STAGE_CHIP[stage] ?? STAGE_CHIP.submitted;
   return (
     <Badge tone="outline" size="sm" className={cn(cfg.cls, className)}>
-      {cfg.label}
+      {label('stageChip', stage, cfg.label)}
     </Badge>
   );
 }
@@ -85,14 +86,14 @@ export function StageChip({ stage, className }: { stage: string; className?: str
  * Live indicator
  * ------------------------------------------------------------------ */
 
-export function LiveDot({ className, label = 'Live' }: { className?: string; label?: string }) {
+export function LiveDot({ className, label }: { className?: string; label?: string }) {
   return (
     <span className={cn('inline-flex items-center gap-1.5', className)}>
       <span className="relative flex size-2" aria-hidden="true">
         <span className="absolute inset-0 animate-pulse-ring rounded-full bg-current opacity-60" />
         <span className="relative size-2 rounded-full bg-current" />
       </span>
-      <span className="text-2xs font-bold uppercase tracking-[0.1em]">{label}</span>
+      <Eyebrow as="span">{label}</Eyebrow>
     </span>
   );
 }
@@ -113,6 +114,7 @@ export function DeltaChip({
   invert?: boolean;
   className?: string;
 }) {
+  const { t } = useLocale();
   const up = value >= 0;
   const good = invert ? !up : up;
   const Icon = up ? ArrowUpRight : ArrowDownRight;
@@ -129,20 +131,7 @@ export function DeltaChip({
         <span className="nums">{Math.abs(value).toFixed(1)}%</span>
       </span>
       {label && <span className="font-medium text-navy-400">{label}</span>}
-      <span className="sr-only">{up ? 'increase' : 'decrease'}</span>
+      <span className="sr-only">{up ? t('badges.increase') : t('badges.decrease')}</span>
     </span>
-  );
-}
-
-/* ------------------------------------------------------------------ *
- * System status dot for department cards
- * ------------------------------------------------------------------ */
-
-export function StatusPill({ mode, className }: { mode: SystemMode; className?: string }) {
-  const cfg = statusConfig(mode);
-  return (
-    <Badge tone="outline" size="sm" className={cn(cfg.chip, className)}>
-      {cfg.label}
-    </Badge>
   );
 }

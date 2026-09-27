@@ -15,7 +15,7 @@ import {
   type WireMessage,
 } from '@/lib/ai-client';
 import { missingSlots } from '@/lib/ticket-intake';
-import type { ChatMessage, SupportType } from '@/lib/types';
+import type { SupportType } from '@/lib/types';
 import { useApp } from '@/lib/store';
 
 /**
@@ -57,7 +57,14 @@ export interface AiChatState {
   ticket: StoredTicket | null;
   /** Field names the backend rejected on submit, to highlight in the form. */
   rejected: SlotName[];
-  error: string;
+  /**
+   * A translation **key** for the last failure, or `''` for none.
+   *
+   * Keyed rather than a sentence because this is live UI, not history: the banner
+   * stays up until the reporter does something about it, so it should re-read in
+   * whatever language they have since switched to.
+   */
+  errorKey: string;
   safetyNote: string;
   /** True once anything has been captured by voice, for the save-and-source path. */
   viaVoice: boolean;
@@ -164,7 +171,7 @@ const INITIAL: AiChatState = {
   offline: false,
   ticket: null,
   rejected: [],
-  error: '',
+  errorKey: '',
   safetyNote: '',
   viaVoice: false,
   voiceTranscript: [],
@@ -321,7 +328,7 @@ export function useAiChat(): AiChatApi {
         ...prev,
         busy: true,
         status: 'thinking',
-        error: '',
+        errorKey: '',
         // "This intake was at least partly spoken", which is what decides
         // `source` and whether a transcript travels with the ticket at submit.
         // A spoken turn that falls back to the text path still counts: the
@@ -410,7 +417,7 @@ export function useAiChat(): AiChatApi {
         safetyNote: turn.safety_note ?? '',
         // A complete draft invalidates a previous rejection.
         rejected: missing.length === 0 ? [] : prev.rejected,
-        error: '',
+        errorKey: '',
       }));
     } catch (error) {
       // Both failures below put a *non-model* answer in the transcript, so both
@@ -430,7 +437,7 @@ export function useAiChat(): AiChatApi {
           ...prev,
           busy: false,
           offline: true,
-          error: 'The assistant could not accept this message. Your details are still here — try again in a moment.',
+          errorKey: 'aiError.rejected',
         }));
         return;
       }
@@ -574,7 +581,7 @@ export function useAiChat(): AiChatApi {
   }, []);
 
   const submit = React.useCallback(async (): Promise<StoredTicket | null> => {
-    setState((prev) => ({ ...prev, busy: true, error: '' }));
+    setState((prev) => ({ ...prev, busy: true, errorKey: '' }));
     const { draft } = state;
 
     // Pre-flight with the same predicate the backend uses, so an obviously
@@ -587,7 +594,7 @@ export function useAiChat(): AiChatApi {
         status: 'review',
         missing,
         rejected: missing,
-        error: 'Some required details are still missing.',
+        errorKey: 'aiError.stillMissing',
       }));
       return null;
     }
@@ -629,7 +636,7 @@ export function useAiChat(): AiChatApi {
         status: 'submitted',
         ticket,
         rejected: [],
-        error: '',
+        errorKey: '',
       }));
       return ticket;
     } catch (error) {
@@ -637,7 +644,7 @@ export function useAiChat(): AiChatApi {
         ...prev,
         busy: false,
         status: 'review',
-        error: ticketErrorMessage(error),
+        errorKey: ticketErrorKey(error),
         rejected: rejectedSlots(error),
       }));
       return null;
@@ -662,7 +669,7 @@ export function useAiChat(): AiChatApi {
    * form opens, the fields are editable, and nothing writes until it is whole.
    */
   const openReview = React.useCallback(() => {
-    setState((prev) => ({ ...prev, status: 'review', error: '' }));
+    setState((prev) => ({ ...prev, status: 'review', errorKey: '' }));
   }, []);
 
   return {
@@ -742,26 +749,29 @@ function rejectedSlots(error: unknown): SlotName[] {
 }
 
 /**
- * What to tell the reporter when filing fails.
+ * What to tell the reporter when filing fails, as a translation **key**.
  *
  * Keyed on the status code rather than matched against the error text, because
  * the two outages here mean opposite things: `502` is our network to the service,
  * `503` is the service with no database. Telling someone their ticket is safe
  * when it was never written, or that the service is gone when it is merely
  * unreachable, costs them the one durable thing this app has.
+ *
+ * A key rather than a sentence so the banner follows the language the reporter
+ * is currently reading, the same contract as `PortalMessage.failedKey`.
  */
-function ticketErrorMessage(error: unknown): string {
+function ticketErrorKey(error: unknown): string {
   if (!(error instanceof AiRequestError)) {
-    return 'The ticket could not be created. Your details are still here — try again.';
+    return 'aiError.createFailed';
   }
   if (error.status === 502 || error.body.includes('backend_unreachable')) {
-    return 'The relief service could not be reached. Your details are still here — try again in a moment.';
+    return 'aiError.unreachable';
   }
   if (error.status === 503) {
-    return 'The ticket service is temporarily down and no ticket was saved. Everything you entered is still here — try again in a moment.';
+    return 'aiError.serviceDown';
   }
   if (error.status === 400 || error.status === 422) {
-    return 'The service rejected some details. Check the highlighted fields.';
+    return 'aiError.rejectedFields';
   }
-  return 'The ticket could not be created. Your details are still here — try again.';
+  return 'aiError.createFailed';
 }

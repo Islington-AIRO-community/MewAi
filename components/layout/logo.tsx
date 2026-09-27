@@ -1,7 +1,6 @@
 'use client';
 
 import * as React from 'react';
-import { Activity, HeartPulse, ShieldPlus } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 /**
@@ -60,22 +59,5 @@ export function Logo({ className, tone = 'navy' }: { className?: string; tone?: 
         </span>
       </span>
     </span>
-  );
-}
-
-export function LogoGlyphs() {
-  return (
-    <ul className="flex flex-wrap items-center gap-x-5 gap-y-2 text-2xs font-semibold uppercase tracking-[0.1em] text-navy-400">
-      {[
-        { icon: ShieldPlus, label: 'Verified responders' },
-        { icon: Activity, label: 'Live dispatch network' },
-        { icon: HeartPulse, label: 'AI triage, human care' },
-      ].map(({ icon: Icon, label }) => (
-        <li key={label} className="flex items-center gap-1.5">
-          <Icon className="size-3.5" aria-hidden="true" />
-          {label}
-        </li>
-      ))}
-    </ul>
   );
 }

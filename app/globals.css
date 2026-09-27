@@ -20,6 +20,11 @@
     --tabbar-h: 4.25rem;
     --sos-strip-h: 4.5rem;
 
+    /* Clearance a route needs so its last row is not hidden behind the two
+       fixed layers above. The footer derives the same number for itself.
+       Both docked layers are `sm:hidden`, hence the `sm:pb-*` override. */
+    --content-bottom: calc(env(safe-area-inset-bottom) + var(--tabbar-h) + var(--sos-strip-h) + 0.75rem);
+
     color-scheme: light;
   }
 
@@ -115,19 +120,6 @@
     background-size: 32px 32px;
   }
 
-  .radial-fade-navy {
-    mask-image: radial-gradient(ellipse 70% 60% at 50% 0%, #000 40%, transparent 100%);
-  }
-
-  .glass {
-    @apply border border-white/60 bg-white/80 backdrop-blur-xl;
-  }
-
-  .glass-dark {
-    @apply border border-white/10 bg-navy-900/80 backdrop-blur-xl;
-  }
-
-  /* ---------- Emergency treatments ---------- */
   .stripe-alert {
     background-image: repeating-linear-gradient(
       135deg,
@@ -173,10 +165,6 @@
   .text-shadow-sm {
     text-shadow: 0 1px 2px rgb(15 23 42 / 0.08);
   }
-
-  .grain {
-    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.35'/%3E%3C/svg%3E");
-  }
 }
 
 /* Respect user motion preferences across the whole product. */
@@ -196,9 +184,6 @@
 
 /* High-contrast / forced-colors mode support */
 @media (forced-colors: active) {
-  .hc-border {
-    border: 1px solid CanvasText;
-  }
   :focus-visible {
     outline: 3px solid Highlight;
     outline-offset: 2px;

@@ -3,7 +3,6 @@
 import * as React from 'react';
 import { cn } from '@/lib/utils';
 import { Button } from './button';
-import { Modal } from './modal';
 
 export interface ToastAction {
   label: string;
@@ -136,54 +135,5 @@ function ToastCard({ item, onDismiss }: { item: ToastItem; onDismiss: () => void
         <span aria-hidden="true">&times;</span>
       </Button>
     </div>
-  );
-}
-
-export function ConfirmDialog({
-  open,
-  onClose,
-  onConfirm,
-  title,
-  description,
-  confirmLabel = 'Confirm',
-  tone = 'default',
-}: {
-  open: boolean;
-  onClose: () => void;
-  onConfirm: () => void;
-  title: string;
-  description: string;
-  confirmLabel?: string;
-  tone?: 'default' | 'critical';
-}) {
-  return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      title={title}
-      description={description}
-      size="md"
-      tone={tone}
-      footer={
-        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-          <Button variant="outline" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button
-            variant={tone === 'critical' ? 'accent' : 'primary'}
-            onClick={() => {
-              onConfirm();
-              onClose();
-            }}
-          >
-            {confirmLabel}
-          </Button>
-        </div>
-      }
-    >
-      <p className="text-sm leading-relaxed text-navy-600">
-        This action is recorded in the incident log with your account and location.
-      </p>
-    </Modal>
   );
 }

@@ -50,23 +50,33 @@ export function TabsProvider({
 /**
  * Roving-tabindex tab list following the WAI-ARIA tabs pattern with
  * arrow-key navigation, so it is fully keyboard operable.
+ *
+ * `semantics="toggle-group"` is for a row of mutually-exclusive filters, which
+ * is what most of these call sites actually are. Emitting `role="tab"` there
+ * promises a `tabpanel` per tab; with no panels in the tree the promise is
+ * broken and assistive tech is left resolving `aria-controls` to nothing. The
+ * toggle-group form is a `group` of `aria-pressed` buttons, which is the
+ * contract that actually matches a filter.
  */
 export function TabList({
   items,
   label,
   variant = 'pill',
   fill = true,
+  semantics = 'tabs',
   className,
 }: {
   items: TabItem[];
   label: string;
   variant?: 'pill' | 'underline';
   fill?: boolean;
+  semantics?: 'tabs' | 'toggle-group';
   className?: string;
 }) {
   const ctx = useTabs('TabList');
   const { value, setValue } = ctx;
   const listRef = React.useRef<HTMLDivElement>(null);
+  const isTabs = semantics === 'tabs';
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     const idx = items.findIndex((i) => i.id === value);
@@ -85,7 +95,7 @@ export function TabList({
   return (
     <div
       ref={listRef}
-      role="tablist"
+      role={isTabs ? 'tablist' : 'group'}
       aria-label={label}
       onKeyDown={onKeyDown}
       className={cn(
@@ -104,10 +114,11 @@ export function TabList({
             key={item.id}
             data-tab-id={item.id}
             type="button"
-            role="tab"
-            id={`${ctx.idPrefix}-tab-${item.id}`}
-            aria-selected={active}
-            aria-controls={`${ctx.idPrefix}-panel-${item.id}`}
+            role={isTabs ? 'tab' : undefined}
+            id={isTabs ? `${ctx.idPrefix}-tab-${item.id}` : undefined}
+            aria-selected={isTabs ? active : undefined}
+            aria-pressed={isTabs ? undefined : active}
+            aria-controls={isTabs ? `${ctx.idPrefix}-panel-${item.id}` : undefined}
             tabIndex={active ? 0 : -1}
             onClick={() => setValue(item.id)}
             className={cn(
@@ -143,6 +154,7 @@ export function Tabs({
   label,
   variant = 'pill',
   fill = true,
+  semantics = 'tabs',
   children,
   panelClassName,
 }: {
@@ -153,6 +165,7 @@ export function Tabs({
   label: string;
   variant?: 'pill' | 'underline';
   fill?: boolean;
+  semantics?: 'tabs' | 'toggle-group';
   children?: React.ReactNode;
   panelClassName?: string;
 }) {
@@ -163,6 +176,7 @@ export function Tabs({
         label={label}
         variant={variant}
         fill={fill}
+        semantics={semantics}
         className={className}
       />
       {children ? <div className={cn('mt-5', panelClassName)}>{children}</div> : null}

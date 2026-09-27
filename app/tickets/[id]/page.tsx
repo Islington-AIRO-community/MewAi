@@ -25,6 +25,10 @@ import { cn } from '@/lib/utils';
 import { useTicketConversation, useTicketTranscript, type PortalMessage } from '@/lib/ticket-portal';
 import { TicketTranscriptView } from '@/components/assistant/ticket-transcript';
 import { formatDateTime } from '@/lib/time';
+import { Eyebrow } from '@/components/ui/primitives';
+import { LoadingBlock, StateCard } from '@/components/ui/patterns';
+import { intlLocale } from '@/lib/i18n-strings';
+import { useLocale } from '@/lib/i18n';
 
 /**
  * One ticket, and the conversation attached to it.
@@ -44,6 +48,7 @@ import { formatDateTime } from '@/lib/time';
  * not on the account renders an in-page state rather than `notFound()`.
  */
 export default function TicketPortalPage() {
+  const { t, label, locale } = useLocale();
   const params = useParams<{ id: string }>();
   const id = Array.isArray(params?.id) ? params.id[0] : params?.id;
   const { ticket, messages, error, loading, sending, degraded, send } =
@@ -61,50 +66,45 @@ export default function TicketPortalPage() {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
   }, [messages.length]);
 
-  if (!id) return <Frame><Missing /></Frame>;
-
   if (loading) {
     return (
       <Frame>
-        <p
-          className="flex items-center justify-center gap-2 py-20 text-sm text-navy-500"
-          role="status"
-          aria-live="polite"
-        >
-          <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-          Opening your ticket…
-        </p>
+        <LoadingBlock label={t('ticket.opening')} className="py-20" />
       </Frame>
     );
   }
 
   if (error || !ticket) {
+    const signedOut = error?.kind === 'not_signed_in';
     return (
       <Frame>
-        <Card className="p-8 text-center">
-          <span
-            className="mx-auto grid size-12 place-items-center rounded-2xl bg-alert-50 text-alert-600 ring-1 ring-inset ring-alert-200"
-            aria-hidden="true"
-          >
-            <AlertCircle className="size-6" />
-          </span>
-          <h1 className="mt-4 text-lg font-bold tracking-tight text-navy-900">
-            {error?.kind === 'not_signed_in'
-              ? 'Sign in to see this ticket'
-              : 'Ticket not found'}
-          </h1>
-          <p className="mx-auto mt-1.5 max-w-sm text-sm leading-relaxed text-navy-500">
-            {error?.kind === 'not_signed_in'
-              ? 'A ticket can only be opened by the account it was filed with.'
-              : 'No ticket with that reference is on your account. If you filed it while signed out it cannot be reopened here — quote the reference to any team that reaches you.'}
-          </p>
-          <Button asChild variant="outline" size="lg" className="mt-5">
-            <Link href="/tickets">
-              <ArrowLeft aria-hidden="true" />
-              All my tickets
-            </Link>
-          </Button>
-        </Card>
+        <StateCard
+          icon={AlertCircle}
+          tone="alert"
+          titleAs="h1"
+          title={t(signedOut ? 'ticket.signedIn.title' : 'ticket.missing.title')}
+          action={
+            /* The copy above promises a way back in, so one has to exist. The
+               callback returns the reporter to this exact ticket, not the list. */
+            signedOut ? (
+              <Button asChild variant="primary" size="lg">
+                <Link href={`/login?callbackUrl=/tickets/${id}`}>
+                  {t('ticket.signedIn.cta')}
+                </Link>
+              </Button>
+            ) : (
+              <Button asChild variant="outline" size="lg">
+                <Link href="/tickets">
+                  <ArrowLeft aria-hidden="true" />
+                  {t('ticket.missing.cta')}
+                </Link>
+              </Button>
+            )
+          }
+          className="p-8"
+        >
+          {t(signedOut ? 'ticket.signedIn.body' : 'ticket.missing.body')}
+        </StateCard>
       </Frame>
     );
   }
@@ -132,37 +132,51 @@ export default function TicketPortalPage() {
         </div>
 
         <p className="mt-3 text-sm leading-relaxed text-navy-600">
-          {ticketStatusDetail(ticket.status)}
+          {label('ticketStatusDetail', ticket.status, ticketStatusDetail(ticket.status))}
         </p>
 
-        <dl className="mt-5 grid gap-x-6 gap-y-3 border-t border-navy-100 pt-4 sm:grid-cols-2">
-          <Fact icon={MapPin} label="Location" value={ticket.location} />
+        {/* `data-no-translate`: the facts block is the reporter's phone number
+            and address. Prose is what this feature is for; a phone number is
+            data, and a model that re-renders one is a call to the wrong
+            household. */}
+        <dl
+          className="mt-5 grid gap-x-6 gap-y-3 border-t border-navy-100 pt-4 sm:grid-cols-2"
+          data-no-translate
+        >
+          <Fact icon={MapPin} label={t('ticket.fact.location')} value={ticket.location} />
           <Fact
             icon={Clock}
-            label="Filed"
-            value={formatDateTime(ticket.created_at)}
+            label={t('ticket.fact.filed')}
+            value={formatDateTime(ticket.created_at, intlLocale(locale))}
           />
           <Fact
-            label="Support needed"
+            label={t('ticket.fact.support')}
             value={ticket.support_needed
-              .map((t) => SUPPORT_TYPE_LIST.find((s) => s.id === t)?.shortLabel ?? t)
+              .map((type) => {
+                const meta = SUPPORT_TYPE_LIST.find((s) => s.id === type);
+                return meta ? label('support', meta.id, meta.shortLabel) : type;
+              })
               .join(', ')}
           />
           <Fact
             icon={Users}
-            label="People affected"
+            label={t('ticket.fact.people')}
             value={
               ticket.people_affected === null
-                ? 'Not recorded'
+                ? t('ticket.fact.notRecorded')
                 : String(ticket.people_affected)
             }
           />
           <Fact
-            label="Priority"
-            value={PRIORITIES[ticket.urgency]?.label ?? ticket.urgency}
+            label={t('ticket.fact.priority')}
+            value={label(
+              'priority',
+              ticket.urgency,
+              PRIORITIES[ticket.urgency]?.label ?? ticket.urgency,
+            )}
           />
           <Fact
-            label="Contact number"
+            label={t('ticket.fact.contact')}
             value={ticket.reporter_phone}
             mono
           />
@@ -179,37 +193,40 @@ export default function TicketPortalPage() {
           error={
             transcript.error && transcript.error.kind !== 'not_signed_in'
               ? transcript.error.kind === 'unavailable'
-                ? 'The ticket service is briefly down, so the transcript could not be loaded. Your ticket is unaffected.'
-                : 'The transcript of this call could not be loaded.'
+                ? t('ticket.transcript.unavailable')
+                : t('ticket.transcript.failed')
               : null
           }
-          emptyHint="Everything you told us is in the details above."
+          emptyHintKey="transcript.reporterHint"
         />
       </Card>
 
       {/* Conversation. */}
       <Card className="p-0">
         <h2 className="border-b border-navy-100 px-5 py-3.5 text-sm font-bold tracking-tight text-navy-900">
-          Messages about this ticket
+          {t('ticket.messages.title')}
         </h2>
 
         {degraded && (
           <p className="flex items-start gap-2 border-b border-alert-200 bg-alert-50 px-5 py-2.5 text-xs font-semibold leading-relaxed text-alert-800">
             <WifiOff className="mt-px size-3.5 shrink-0" aria-hidden="true" />
-            <span>
-              That answer came from the offline set — the live assistant was
-              unreachable. Your message was still added to the ticket.
-            </span>
+            <span>{t('ticket.messages.degraded')}</span>
           </p>
         )}
 
+        {/* `data-no-translate` on the thread below: it is the record of what was
+            said, by the reporter and by the response team. Rewriting either side
+            of it changes what a responder would later read as having been said. */}
         {messages.length === 0 ? (
           <p className="px-5 py-6 text-sm leading-relaxed text-navy-500">
-            No messages yet. Anything you add here goes to the response team working
-            on this ticket.
+            {t('ticket.messages.empty')}
           </p>
         ) : (
-          <ul ref={listRef} className="max-h-[26rem] space-y-3 overflow-y-auto px-5 py-4">
+          <ul
+            ref={listRef}
+            className="max-h-[26rem] space-y-3 overflow-y-auto px-5 py-4"
+            data-no-translate
+          >
             {messages.map((message) => (
               <li key={message.id}>
                 <Bubble message={message} />
@@ -219,7 +236,7 @@ export default function TicketPortalPage() {
               <li className="flex items-center gap-2 text-2xs text-navy-400">
                 <Loader2 className="size-3 animate-spin" aria-hidden="true" />
                 <span role="status" aria-live="polite">
-                  The assistant is replying…
+                  {t('ticket.messages.replying')}
                 </span>
               </li>
             )}
@@ -231,19 +248,19 @@ export default function TicketPortalPage() {
           className="flex items-end gap-2 border-t border-navy-100 bg-navy-50/50 px-4 py-3"
         >
           <label htmlFor="follow-up" className="sr-only">
-            Add a message about this ticket
+            {t('ticket.messages.inputAria')}
           </label>
           <textarea
             id="follow-up"
             rows={2}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Ask a question, or add something that changed…"
+            placeholder={t('ticket.messages.inputPlaceholder')}
             className="min-h-11 flex-1 resize-none rounded-xl border border-navy-200 bg-white px-3 py-2.5 text-base leading-relaxed text-navy-900 placeholder:text-navy-400 focus:border-dispatch-400 focus:outline-none focus:ring-2 focus:ring-dispatch-200"
           />
           <Button type="submit" size="md" disabled={!query.trim() || sending}>
             <Send aria-hidden="true" />
-            <span className="sr-only sm:not-sr-only">Send</span>
+            <span className="sr-only sm:not-sr-only">{t('ticket.messages.send')}</span>
           </Button>
         </form>
       </Card>
@@ -252,6 +269,7 @@ export default function TicketPortalPage() {
 }
 
 function Frame({ children }: { children: React.ReactNode }) {
+  const { t } = useLocale();
   return (
     <div className="pb-32 sm:pb-16">
       <div className="border-b border-navy-200 bg-white">
@@ -259,24 +277,13 @@ function Frame({ children }: { children: React.ReactNode }) {
           <Button asChild variant="ghost" size="sm">
             <Link href="/tickets">
               <ArrowLeft aria-hidden="true" />
-              My tickets
+              {t('tickets.title')}
             </Link>
           </Button>
         </div>
       </div>
       <div className="container grid max-w-3xl gap-4 py-6 sm:py-8">{children}</div>
     </div>
-  );
-}
-
-function Missing() {
-  return (
-    <Card className="p-8 text-center">
-      <h1 className="text-lg font-bold tracking-tight text-navy-900">No ticket selected</h1>
-      <Button asChild variant="outline" size="lg" className="mt-5">
-        <Link href="/tickets">All my tickets</Link>
-      </Button>
-    </Card>
   );
 }
 
@@ -293,10 +300,10 @@ function Fact({
 }) {
   return (
     <div className="min-w-0">
-      <dt className="flex items-center gap-1.5 text-2xs font-bold uppercase tracking-[0.06em] text-navy-400">
+      <Eyebrow as="dt" className="flex items-center gap-1.5">
         {Icon && <Icon className="size-3 shrink-0" aria-hidden="true" />}
         {label}
-      </dt>
+      </Eyebrow>
       <dd
         className={cn(
           'mt-0.5 break-words text-sm font-semibold text-navy-800',
@@ -310,6 +317,7 @@ function Fact({
 }
 
 function Bubble({ message }: { message: PortalMessage }) {
+  const { t } = useLocale();
   const mine = message.role === 'user';
   return (
     <div className={cn('flex', mine ? 'justify-end' : 'justify-start')}>
@@ -320,7 +328,7 @@ function Bubble({ message }: { message: PortalMessage }) {
             ? 'bg-dispatch-500 text-white'
             : 'border border-navy-200 bg-white text-navy-800',
           message.pending && 'opacity-60',
-          message.failed && 'ring-1 ring-inset ring-alert-400',
+          message.failedKey && 'ring-1 ring-inset ring-alert-400',
         )}
       >
         {message.safetyNote && (
@@ -331,12 +339,12 @@ function Bubble({ message }: { message: PortalMessage }) {
         )}
         <p className="whitespace-pre-wrap break-words">{message.text}</p>
         {message.pending && (
-          <p className="mt-1 text-2xs opacity-80">Sending…</p>
+          <p className="mt-1 text-2xs opacity-80">{t('ticket.messages.sending')}</p>
         )}
-        {message.failed && (
+        {message.failedKey && (
           <p className="mt-1.5 flex items-start gap-1 text-2xs font-semibold text-white">
             <AlertCircle className="mt-px size-3 shrink-0" aria-hidden="true" />
-            {message.failed}
+            {t(message.failedKey)}
           </p>
         )}
       </div>

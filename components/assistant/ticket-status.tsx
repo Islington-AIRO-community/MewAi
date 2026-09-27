@@ -3,6 +3,7 @@
 import { CheckCircle2, Clock, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { TicketStatus } from '@/lib/ai-client';
+import { useLocale } from '@/lib/i18n';
 
 /**
  * Ticket lifecycle, as a reporter reads it.
@@ -58,10 +59,12 @@ export function ticketPhase(status: TicketStatus): TicketPhase {
   return PHASES[status]?.phase ?? 'awaiting';
 }
 
+/** The English source. Translate with `label('ticketStatus', status, …)`. */
 export function ticketStatusLabel(status: TicketStatus): string {
   return PHASES[status]?.label ?? PHASES.submitted.label;
 }
 
+/** The English source. Translate with `label('ticketStatusDetail', status, …)`. */
 export function ticketStatusDetail(status: TicketStatus): string {
   return PHASES[status]?.detail ?? PHASES.submitted.detail;
 }
@@ -92,6 +95,7 @@ export function TicketStatusBadge({
   status: TicketStatus;
   className?: string;
 }) {
+  const { label } = useLocale();
   const phase = ticketPhase(status);
   const Icon = PHASE_ICONS[phase];
   return (
@@ -103,7 +107,7 @@ export function TicketStatusBadge({
       )}
     >
       <Icon className="size-3.5 shrink-0" aria-hidden="true" />
-      {ticketStatusLabel(status)}
+      {label('ticketStatus', status, ticketStatusLabel(status))}
     </span>
   );
 }

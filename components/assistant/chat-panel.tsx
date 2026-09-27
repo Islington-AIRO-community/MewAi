@@ -19,17 +19,21 @@ import {
 import type { ActionCard, ChatMessage } from '@/lib/types';
 import { clockTime, cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { ActionCardBanner } from './action-card';
 import { IntakeChecklist, TicketReview } from './ticket-review';
 import type { AiChatApi } from '@/lib/use-ai-chat';
 import { usePrefersReducedMotion } from '@/lib/hooks';
+import { Eyebrow } from '@/components/ui/primitives';
+import { Notice } from '@/components/ui/patterns';
+import { SearchField } from '@/components/ui/inputs';
+import { useLocale } from '@/lib/i18n';
 
 /* ------------------------------------------------------------------ *
  * Message bubble
  * ------------------------------------------------------------------ */
 
 function MessageBubble({ message }: { message: ChatMessage }) {
+  const { t } = useLocale();
   const isUser = message.role === 'user';
   const isSystem = message.role === 'system';
 
@@ -47,9 +51,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
           <Info className="size-3.5" />
         </span>
         <div className="min-w-0 flex-1 rounded-lg border border-dashed border-navy-200 bg-navy-50/70 px-3 py-2">
-          <p className="text-2xs font-bold uppercase tracking-[0.08em] text-navy-400">
-            System
-          </p>
+          <Eyebrow>{t('chat.system')}</Eyebrow>
           <p className="mt-0.5 text-xs leading-relaxed text-navy-600">{message.text}</p>
           <p className="nums mt-1 text-2xs text-navy-400">{clockTime(message.at)}</p>
         </div>
@@ -107,12 +109,12 @@ function MessageBubble({ message }: { message: ChatMessage }) {
           {message.viaVoice && (
             <span className="inline-flex items-center gap-0.5">
               <Mic className="size-3" aria-hidden="true" />
-              <span className="sr-only">Sent by voice</span>
+              <span className="sr-only">{t('chat.sentByVoice')}</span>
             </span>
           )}
           {message.confidence !== undefined && (
             <span className="font-semibold text-navy-300">
-              {Math.round(message.confidence * 100)}% sure
+              {t('chat.sure', { n: Math.round(message.confidence * 100) })}
             </span>
           )}
           {/* Served from the offline set, not the model. Marked visibly rather
@@ -121,7 +123,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
           {message.offline && (
             <span className="inline-flex items-center gap-1 font-bold text-alert-700">
               <WifiOff className="size-3" aria-hidden="true" />
-              <span>Offline reply</span>
+              <span>{t('chat.offlineReply')}</span>
             </span>
           )}
         </div>
@@ -165,6 +167,7 @@ export function ChatPanel({
   const [draft, setDraft] = React.useState('');
   const [query, setQuery] = React.useState('');
   const [searchOpen, setSearchOpen] = React.useState(false);
+  const { t } = useLocale();
   const listRef = React.useRef<HTMLUListElement>(null);
   const searchRef = React.useRef<HTMLInputElement>(null);
   const inputRef = React.useRef<HTMLTextAreaElement>(null);
@@ -257,18 +260,13 @@ export function ChatPanel({
                 className="overflow-hidden"
               >
                 <div className="relative">
-                  <Search
-                    className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-navy-400"
-                    aria-hidden="true"
-                  />
-                  <input
+                  <SearchField
                     ref={searchRef}
-                    type="search"
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
-                    placeholder="Search this conversation…"
-                    aria-label="Search conversation history"
-                    className="h-10 w-full rounded-lg border border-navy-200 bg-white pl-9 pr-9 text-sm text-navy-800 placeholder:text-navy-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-dispatch-600"
+                    placeholder={t('chat.searchPlaceholder')}
+                    aria-label={t('chat.searchAria')}
+                    inputClassName="h-10 pr-9"
                   />
                   <button
                     type="button"
@@ -276,7 +274,7 @@ export function ChatPanel({
                       setQuery('');
                       setSearchOpen(false);
                     }}
-                    aria-label="Close search"
+                    aria-label={t('chat.closeSearch')}
                     className="absolute right-2 top-1/2 grid size-7 -translate-y-1/2 place-items-center rounded-md text-navy-400 hover:bg-navy-100 hover:text-navy-700"
                   >
                     <X className="size-4" aria-hidden="true" />
@@ -284,8 +282,13 @@ export function ChatPanel({
                 </div>
                 <p role="status" aria-live="polite" className="mt-1.5 px-1 text-2xs text-navy-400">
                   {query
-                    ? `${filtered?.length ?? 0} message${filtered?.length === 1 ? '' : 's'} matching "${query}"`
-                    : 'Search by keyword or timestamp, e.g. 14:32'}
+                    ? t(
+                        (filtered?.length ?? 0) === 1
+                          ? 'chat.searchMatches'
+                          : 'chat.searchMatchesPlural',
+                        { n: filtered?.length ?? 0, query },
+                      )
+                    : t('chat.searchHint')}
                 </p>
               </motion.div>
             ) : (
@@ -298,7 +301,7 @@ export function ChatPanel({
               >
                 <p className="flex items-center gap-1.5 text-xs font-semibold text-navy-500">
                   <ShieldCheck className="size-3.5 text-relief-600" aria-hidden="true" />
-                  {messages.length} entries
+                  {t('chat.entries', { n: messages.length })}
                 </p>
                 <Button
                   variant="ghost"
@@ -307,7 +310,7 @@ export function ChatPanel({
                   className="shrink-0"
                 >
                   <Search className="size-3.5" aria-hidden="true" />
-                  Search log
+                  {t('chat.searchLog')}
                 </Button>
               </motion.div>
             )}
@@ -320,13 +323,13 @@ export function ChatPanel({
         {query && (
           <p className="mb-3 flex items-center gap-1.5 rounded-lg bg-alert-50 px-3 py-2 text-xs font-semibold text-alert-800 ring-1 ring-inset ring-alert-200">
             <Search className="size-3.5" aria-hidden="true" />
-            Showing search results
+            {t('chat.showingResults')}
             <button
               type="button"
               onClick={() => setQuery('')}
               className="ml-auto underline underline-offset-2"
             >
-              Clear
+              {t('chat.clear')}
             </button>
           </p>
         )}
@@ -334,24 +337,18 @@ export function ChatPanel({
         {/* Safety guidance from the assistant sits above the transcript: it is
             the one instruction that must not be scrolled past. */}
         {ai?.safetyNote && !reviewing && (
-          <p className="mb-3 flex items-start gap-2 rounded-xl border border-emergency-200 bg-emergency-50 px-3 py-2.5 text-xs font-semibold leading-relaxed text-emergency-800">
-            <ShieldCheck className="mt-px size-4 shrink-0" aria-hidden="true" />
-            <span>{ai.safetyNote}</span>
-          </p>
+          <Notice tone="critical" icon={ShieldCheck} className="mb-3">
+            {ai.safetyNote}
+          </Notice>
         )}
 
         {/* Sticky note that the live assistant is down. The per-message
             "Offline reply" marker says *which* answers were canned; this says
             why, once, instead of repeating the explanation on every bubble. */}
         {ai?.offline && !reviewing && (
-          <p className="mb-3 flex items-start gap-2 rounded-xl border border-alert-200 bg-alert-50 px-3 py-2.5 text-xs font-semibold leading-relaxed text-alert-800">
-            <WifiOff className="mt-px size-4 shrink-0" aria-hidden="true" />
-            <span>
-              The live assistant is unreachable, so replies are coming from the
-              offline set. Your ticket draft is still saved — press submit in the
-              review step when it is ready.
-            </span>
-          </p>
+          <Notice tone="caution" icon={WifiOff} className="mb-3">
+            {t('chat.offlineNotice')}
+          </Notice>
         )}
 
         {/* Empty state. The transcript starts empty on purpose, so this is the
@@ -370,20 +367,23 @@ export function ChatPanel({
               <Sparkles className="size-5" />
             </span>
             <p className="mt-3.5 text-sm font-bold tracking-tight text-navy-900">
-              Describe what is happening
+              {t('chat.empty.title')}
             </p>
             <p className="mt-1.5 max-w-[30ch] text-xs leading-relaxed text-navy-500">
-              In your own words, by voice or text. I will ask for whatever I
-              still need, then read it back before anything is sent.
+              {t('chat.empty.body')}
             </p>
             <p className="mt-4 flex items-center gap-1.5 text-2xs font-semibold text-relief-700">
               <ShieldCheck className="size-3.5 shrink-0" aria-hidden="true" />
-              Nothing is dispatched without your confirmation
+              {t('chat.empty.reassure')}
             </p>
           </div>
         )}
 
-        <ul ref={listRef} className="space-y-3.5">
+        {/* `data-no-translate`: the transcript is a record of what the reporter
+            said, and a ticket built from it is filed against those words. The
+            surrounding chrome — the empty state above, the quick phrases, the
+            hints — is all curated copy and is translated normally. */}
+        <ul ref={listRef} className="space-y-3.5" data-no-translate>
           {results.map((m) => (
             <MessageBubble key={m.id} message={m} />
           ))}
@@ -402,10 +402,10 @@ export function ChatPanel({
               </span>
               <div className="flex items-center gap-2 rounded-2xl rounded-tl-sm border border-navy-200 bg-white px-3.5 py-3 shadow-xs">
                 <Loader2 className="size-4 animate-spin text-dispatch-600" aria-hidden="true" />
-                <span className="text-sm text-navy-500">Checking the response network…</span>
+                <span className="text-sm text-navy-500">{t('chat.checking')}</span>
               </div>
               <span role="status" aria-live="polite" className="sr-only">
-                The assistant is typing a reply.
+                {t('chat.typing')}
               </span>
             </motion.li>
           )}
@@ -442,7 +442,7 @@ export function ChatPanel({
             className="mt-1 flex w-full items-center justify-center gap-1.5 rounded-lg py-1 text-2xs font-semibold text-navy-500 underline underline-offset-2 transition-colors hover:text-navy-900"
           >
             <PencilLine className="size-3 shrink-0" aria-hidden="true" />
-            I&apos;d rather fill in the form myself
+            {t('chat.manualForm')}
           </button>
         </div>
       )}
@@ -471,7 +471,7 @@ export function ChatPanel({
                 aria-valuemin={0}
                 aria-valuemax={ai.missing.length + 1}
                 aria-valuenow={1}
-                aria-label={`${ai.missing.length} details still needed`}
+                aria-label={t('chat.stillNeeded', { n: ai.missing.length })}
               >
                 <span
                   className="block h-full rounded-full bg-dispatch-500 transition-[width] duration-500 ease-out"
@@ -480,15 +480,13 @@ export function ChatPanel({
                   }}
                 />
               </span>
-              <span className="nums shrink-0">
-                {ai.missing.length} more to go
-              </span>
+              <span className="nums shrink-0">{t('chat.moreToGo', { n: ai.missing.length })}</span>
             </p>
           )}
 
           <div className="relative min-w-0 flex-1">
             <label htmlFor="relief-chat-input" className="sr-only">
-              Describe what you need
+              {t('chat.inputLabel')}
             </label>
             <textarea
               id="relief-chat-input"
@@ -497,7 +495,7 @@ export function ChatPanel({
               value={draft}
               onChange={autoGrow}
               onKeyDown={onKeyDown}
-              placeholder="Describe what you need — e.g. “two people trapped in a basement”"
+              placeholder={t('chat.inputPlaceholder')}
               aria-describedby="relief-chat-help"
               className={cn(
                 'max-h-40 min-h-[52px] w-full resize-none rounded-xl border border-navy-200 bg-white py-3.5 pl-4 pr-12 text-[15px] leading-relaxed text-navy-800',
@@ -510,7 +508,7 @@ export function ChatPanel({
               size="icon"
               disabled={!draft.trim() || waiting}
               className="absolute bottom-2.5 right-2.5"
-              srLabel="Send message"
+              srLabel={t('chat.send')}
             >
               <ArrowUp aria-hidden="true" />
             </Button>
@@ -522,9 +520,7 @@ export function ChatPanel({
           >
             <p className="flex min-w-0 items-center gap-1.5">
               <CornerDownLeft className="size-3 shrink-0" aria-hidden="true" />
-              <span className="truncate">
-                Enter to send · Shift + Enter for a new line
-              </span>
+              <span className="truncate">{t('chat.keyboardHint')}</span>
             </p>
           </div>
         </form>
