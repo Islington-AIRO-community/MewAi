@@ -1,0 +1,21 @@
+# FLARE Disaster Intelligence Layer - Python dependencies
+#
+# Verified working set for this prototype (Python 3.14.7, Windows):
+#   requests 2.34.2, pydantic 2.13.5, fastapi 0.141.1, pytest 9.1.1
+#
+# Install:
+#   python -m pip install -r requirements.txt
+
+# --- runtime ---------------------------------------------------------------
+requests>=2.32,<3          # HTTP access to the public Open-Meteo / USGS APIs
+pydantic>=2.7,<3          # output-contract validation (schemas/events.py)
+fastapi>=0.115,<1          # HTTP/JSON interface for the relief network
+uvicorn[standard]>=0.30,<1 # ASGI server for `uvicorn api:app`
+
+# --- development / testing -------------------------------------------------
+pytest>=8,<10             # unit tests and the opt-in live API suite
+httpx2>=0.28,<1            # required by fastapi.testclient for the API tests
+
+# NOTE: no machine-learning library is listed, because no model is trained or
+# used at this milestone. The flood risk engine is a rule-based composite index.
+# See risk/config.py and PROJECT_STATE.md section 8.
